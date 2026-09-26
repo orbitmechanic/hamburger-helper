@@ -14,6 +14,7 @@ const GRID_H := 15
 const STEP_WALK := 0.125
 const STEP_DASH := 0.055
 const STEP_CLIMB := 0.11
+const STEP_FALL := 0.075
 
 const GRAVITY := 1150.0
 const MAX_FALL := 520.0
@@ -38,7 +39,7 @@ const COL_PLATE := Color("f4f4ff")
 const COL_SALT := Color("ffffff")
 const COL_OUTLINE := Color("14141f")
 
-const PLAYER_SPEED_SKIN := Color("f2c8a0")
+const PLAYER_COOK_SKIN := Color("f2c8a0")
 const PLAYER_COOK_SHIRT := Color("e8e8f0")
 const PLAYER_COOK_HAT := Color("ffffff")
 const PLAYER_COOK_PANTS := Color("3050a0")

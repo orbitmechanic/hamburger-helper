@@ -1,0 +1,15 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/game/game.gd" id="1_game"]
+[ext_resource type="Script" path="res://scripts/game/hud.gd" id="2_hud"]
+
+[node name="Game" type="Node2D"]
+script = ExtResource("1_game")
+
+[node name="HudLayer" type="CanvasLayer" parent="."]
+
+[node name="Hud" type="Control" parent="HudLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("2_hud")

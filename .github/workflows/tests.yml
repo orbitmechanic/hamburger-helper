@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot
+        run: |
+          set -euo pipefail
+          version=4.7.2-stable
+          curl -sSL -o godot.zip \
+            "https://github.com/godotengine/godot/releases/download/${version}/Godot_v${version}_linux.x86_64.zip"
+          curl -sSL -o SHA512-SUMS.txt \
+            "https://github.com/godotengine/godot/releases/download/${version}/SHA512-SUMS.txt"
+          grep "Godot_v${version}_linux.x86_64.zip" SHA512-SUMS.txt | sed 's/$/  godot.zip/' | sha512sum -c -
+          unzip -q godot.zip
+          sudo install -m 755 "Godot_v${version}_linux.x86_64" /usr/local/bin/godot
+          godot --version
+
+      - name: Import project
+        run: godot --headless --import
+
+      - name: Run test suite
+        # The timeout matters: if the test script fails to parse the scene
+        # would idle forever instead of exiting non-zero.
+        run: timeout 120 godot --headless res://tests/test_scene.tscn
+
+      - name: Smoke test both scenes
+        run: |
+          set -euo pipefail
+          timeout 60 godot --headless --quit-after 240
+          timeout 60 godot --headless scenes/game.tscn --quit-after 600

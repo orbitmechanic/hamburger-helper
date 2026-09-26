@@ -19,12 +19,15 @@ var _occupancy := {}
 var _table_stacks := {}
 ## Dispensers keyed by cell, mapping to the food kinds they emit in order.
 var _dispensers := {}
+## How many times each dispenser has been bumped, so it can cycle its output.
+var _dispenser_index := {}
 ## Burger stacks that are complete but not yet credited, keyed by table cell.
 var _completed := {}
 
 var level: LevelData.Level
 var salt_cells: Array[Vector2i] = []
-var enemy_spawns: Array[Vector2i] = []
+## Enemy spawn cells mapped to their kind.
+var enemy_kinds := {}
 var player_spawn := Vector2i(1, 12)
 
 
@@ -35,9 +38,10 @@ func setup(lv: LevelData.Level) -> void:
 	_occupancy.clear()
 	_table_stacks.clear()
 	_dispensers.clear()
+	_dispenser_index.clear()
 	_completed.clear()
 	salt_cells.clear()
-	enemy_spawns.clear()
+	enemy_kinds.clear()
 
 	for y in lv.map.size():
 		var row: String = lv.map[y]
@@ -65,8 +69,17 @@ func _place(x: int, y: int, ch: String) -> void:
 		"b", "l", "t", "c", "m":
 			_set_tile(cell, Tile.DISPENSER)
 			_dispensers[cell] = _dispenser_kinds(ch)
-		"e", "p", "o":
-			enemy_spawns.append(cell)
+		"e":
+			enemy_kinds[cell] = Enemy.Kind.HOTDOG
+		"p":
+			enemy_kinds[cell] = Enemy.Kind.PICKLE
+		"o":
+			enemy_kinds[cell] = Enemy.Kind.ONION
+
+
+## True when a salt pile is at this cell.
+func is_salt(cell: Vector2i) -> bool:
+	return salt_cells.has(cell)
 
 
 ## Dispensers cycle through these kinds, one per bump. The bun dispenser
@@ -128,6 +141,16 @@ func is_dispenser(cell: Vector2i) -> bool:
 ## Returns the kinds a dispenser cycles through, or an empty array.
 func dispenser_kinds(cell: Vector2i) -> Array:
 	return _dispensers.get(cell, [])
+
+
+## Advances a dispenser's cycle and returns the kind it now emits, or -1.
+func bump_dispenser(cell: Vector2i) -> int:
+	var kinds: Array = _dispensers.get(cell, [])
+	if kinds.is_empty():
+		return -1
+	var idx: int = _dispenser_index.get(cell, 0)
+	_dispenser_index[cell] = (idx + 1) % kinds.size()
+	return kinds[idx]
 
 
 # --- Occupancy -------------------------------------------------------------

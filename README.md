@@ -8,11 +8,31 @@ keep the hot dogs off your back.
 ## Running
 
 ```sh
-godot --path .                 # play
-godot --headless --script res://tests/run_tests.gd   # run the test suite
+godot --path .                                          # play
+godot --headless --import                               # build the class cache
+godot --headless res://tests/test_scene.tscn            # run the test suite
 ```
 
 No export templates are required to run from source.
+
+The test runner is a scene rather than a `godot --script` entry point on
+purpose: a `--script` entry is compiled before autoloads are registered, so
+autoload identifiers are invisible to it and every script that depends on one
+fails to compile.
+
+## Controls
+
+| Action | Keys |
+|--------|------|
+| Move / climb | Arrow keys or WASD |
+| Grab, or place onto a counter | Space or X |
+| Throw the tray | Z or C |
+| Pause | P or Escape |
+
+Walking into a dispenser drops its next ingredient at your feet, so simply
+leaning against one keeps it producing. Pressing into a solid counter starts a
+run along its top edge, which is how you cross a gap you would otherwise fall
+through.
 
 ## Design notes
 
@@ -42,7 +62,18 @@ makes them work as assembly surfaces.
 ```
 scripts/game/     level data, board grid, game flow, autoloads
 scripts/player/   the chef
-scripts/food/     ingredient definitions, dispensers
+scripts/food/     ingredient definitions, falling items, salt
 scripts/enemies/  roaming hazards
 tests/            headless test runner
 ```
+
+## Tests
+
+`tests/run_tests.gd` runs headless and covers level validation (row widths,
+legal characters, player-start support, ladder contiguity, and that every
+dispenser, table and salt pile is actually reachable), burger scoring and
+assembly rules, and integration paths: assembling a burger through the same
+calls the player makes, ingredients falling and being collected, taking items
+back off a counter, the tray limit, and simulated walking and climbing.
+
+CI runs the suite plus a smoke test of both scenes.
