@@ -143,6 +143,28 @@ func dispenser_kinds(cell: Vector2i) -> Array:
 	return _dispensers.get(cell, [])
 
 
+## Every dispenser on the board, for callers that need to reason about the
+## level as a whole rather than one cell at a time.
+func dispenser_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for cell: Vector2i in _dispensers:
+		out.append(cell)
+	return out
+
+
+## Every counter top, for the same reason. Read from the tiles rather than
+## _table_stacks, which only gains an entry once something is placed on a
+## counter and so does not know where the counters are on a fresh level.
+func table_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	for y in Cfg.GRID_H:
+		for x in Cfg.GRID_W:
+			var cell := Vector2i(x, y)
+			if tile_at(cell) == Tile.TABLE:
+				out.append(cell)
+	return out
+
+
 ## Advances a dispenser's cycle and returns the kind it now emits, or -1.
 func bump_dispenser(cell: Vector2i) -> int:
 	var kinds: Array = _dispensers.get(cell, [])

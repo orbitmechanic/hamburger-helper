@@ -55,11 +55,16 @@ func start_level(index: int) -> void:
 
 
 func _clear_actors() -> void:
-	for child in get_children():
-		child.queue_free()
+	# Null the references first: a node freed at the end of the frame can still
+	# run one more _process, and the old actors must not touch the new level.
 	board = null
 	player = null
 	_popups.clear()
+	# Detach before queue_free, otherwise the outgoing level keeps processing
+	# and drawing for another frame and appears as a ghost behind the new one.
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
 
 
 func _spawn_enemies() -> void:

@@ -29,9 +29,9 @@ jobs:
         run: godot --headless --import
 
       - name: Run test suite
-        # The timeout matters: if the test script fails to parse the scene
-        # would idle forever instead of exiting non-zero.
-        run: timeout 120 godot --headless res://tests/test_scene.tscn
+        # tests/run.sh, not the bare scene: a GDScript runtime error inside a
+        # test aborts that test silently and the suite can still print PASS.
+        run: ./tests/run.sh
 
       - name: Smoke test both scenes
         run: |

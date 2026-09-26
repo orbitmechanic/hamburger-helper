@@ -10,7 +10,7 @@ keep the hot dogs off your back.
 ```sh
 godot --path .                                          # play
 godot --headless --import                               # build the class cache
-godot --headless res://tests/test_scene.tscn            # run the test suite
+./tests/run.sh                                          # run the test suite
 ```
 
 No export templates are required to run from source.
@@ -74,6 +74,13 @@ legal characters, player-start support, ladder contiguity, and that every
 dispenser, table and salt pile is actually reachable), burger scoring and
 assembly rules, and integration paths: assembling a burger through the same
 calls the player makes, ingredients falling and being collected, taking items
-back off a counter, the tray limit, and simulated walking and climbing.
+back off a counter, the tray limit, simulated walking and climbing, and
+building then tearing down every level in turn.
+
+Run it through `tests/run.sh` rather than invoking the scene directly. The
+suite only reports the checks it actually reaches, so a GDScript runtime error
+inside a test aborts that test quietly and can still print `PASS` with the
+coverage missing. The script checks the output for script errors, parse
+failures, a timeout and a result line, and fails if any of them are missing.
 
 CI runs the suite plus a smoke test of both scenes.

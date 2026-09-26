@@ -34,6 +34,7 @@ func _run() -> void:
 	await _test_walking()
 	await _test_climbing()
 	await _test_tray_capacity()
+	await _test_every_level_starts()
 
 	print("")
 	if _failed == 0:
@@ -278,6 +279,49 @@ func _test_tray_capacity() -> void:
 		"tray is %s" % str(harness.player.tray))
 	check(harness.board.table_stack(cell) == [B.CHEESE], "the rejected item stays on the table")
 	harness.teardown()
+
+
+## Every level can be built, spawned into and torn down. Teardown is the part
+## that bit: queue_free is deferred, so a level that was only freed rather than
+## detached kept running against the next one.
+func _test_every_level_starts() -> void:
+	_begin("level progression")
+	var game := Game.new()
+	add_child(game)
+	var total := LevelData.count()
+	for i in total:
+		game.start_level(i)
+		await harness_frames(3)
+		var lv := LevelData.get_level(i)
+		check(game.board != null, "level %d builds a board" % (i + 1))
+		check(game.player != null, "level %d spawns the chef" % (i + 1))
+		check(game.player.cell == game.board.player_spawn,
+			"level %d starts the chef on its pad" % (i + 1),
+			"chef at %s, pad at %s" % [game.player.cell, game.board.player_spawn])
+		check(game.board.dispenser_cells().size() > 0,
+			"level %d has somewhere to get ingredients" % (i + 1),
+			"no dispensers on %s" % lv.name)
+		check(game.board.table_cells().size() > 0,
+			"level %d has somewhere to serve them" % (i + 1),
+			"no counters on %s" % lv.name)
+		check(not game.board.blocks_player(game.board.player_spawn),
+			"level %d starts the chef on clear floor" % (i + 1))
+		# The previous level's nodes must be gone, not merely pending deletion.
+		var live := 0
+		for child in game.get_children():
+			if child is Board or child is Player or child is Enemy:
+				live += 1
+		var expected := 1 + 1 + game.board.enemy_kinds.size()
+		check(live == expected, "level %d has no leftover actors" % (i + 1),
+			"%d actor nodes, expected %d" % [live, expected])
+		check(lv.name != "", "level %d has a name" % (i + 1))
+	game.queue_free()
+	await get_tree().process_frame
+
+
+func harness_frames(count: int) -> void:
+	for i in count:
+		await get_tree().process_frame
 
 
 # --- Harness ----------------------------------------------------------------
