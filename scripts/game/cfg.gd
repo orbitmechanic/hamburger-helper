@@ -16,6 +16,9 @@ const STEP_DASH := 0.055
 const STEP_CLIMB := 0.11
 const STEP_FALL := 0.075
 
+## Seconds the level card holds before the chef takes over.
+const INTRO_TIME := 2.4
+
 const GRAVITY := 1150.0
 const MAX_FALL := 520.0
 

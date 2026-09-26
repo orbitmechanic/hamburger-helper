@@ -77,10 +77,26 @@ calls the player makes, ingredients falling and being collected, taking items
 back off a counter, the tray limit, simulated walking and climbing, and
 building then tearing down every level in turn.
 
-Run it through `tests/run.sh` rather than invoking the scene directly. The
-suite only reports the checks it actually reaches, so a GDScript runtime error
-inside a test aborts that test quietly and can still print `PASS` with the
-coverage missing. The script checks the output for script errors, parse
-failures, a timeout and a result line, and fails if any of them are missing.
+Run it through `tests/run.sh` rather than invoking the scene directly. Two
+things make the obvious commands insufficient, and the script exists because
+both bit during development:
 
-CI runs the suite plus a smoke test of both scenes.
+- The suite only reports the checks it actually reaches, so a GDScript runtime
+  error inside a test aborts that test quietly and can still print `PASS` with
+  the coverage missing.
+- Booting a scene does not fail on a broken script. A parse error in a script
+  attached to a scene still exits `0`, so a smoke test that only checks the exit
+  code is not a smoke test. The level card shipped this way: 106 checks passed
+  while `hud.gd` failed to parse, because the tests build `Game` directly and
+  never load the scene's HUD.
+
+So `tests/run.sh` runs the suite and boots both scenes, judging each run by
+scanning its output for script errors, parse failures and timeouts rather than
+trusting the exit status. CI runs the same script.
+
+## Levels
+
+Four hand-built levels, 16x15 each, validated in tests: `LUNCH RUSH` (3 burgers,
+75s), `DOUBLE SHIFT` (5, 95s), `DINNER RUSH` (6, 110s) and `LATE SHIFT` (7,
+125s). Each level opens on a card naming the level and the job, and the clock
+does not start until the card clears.

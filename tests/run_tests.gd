@@ -35,6 +35,8 @@ func _run() -> void:
 	await _test_climbing()
 	await _test_tray_capacity()
 	await _test_every_level_starts()
+	await _test_level_intro()
+	await _test_full_run_reaches_the_win_screen()
 
 	print("")
 	if _failed == 0:
@@ -317,6 +319,123 @@ func _test_every_level_starts() -> void:
 		check(lv.name != "", "level %d has a name" % (i + 1))
 	game.queue_free()
 	await get_tree().process_frame
+
+
+## The level card holds the chef still and stops the clock, then hands over.
+func _test_level_intro() -> void:
+	_begin("level intro")
+	var game := Game.new()
+	add_child(game)
+	GameState.reset_run()
+	game.start_level(0)
+	check(game.phase == Game.Phase.INTRO, "a level opens on its card", "phase is %d" % game.phase)
+
+	var clock := GameState.time_left
+	var spawn := game.player.cell
+	Input.action_press(&"move_right")
+	await harness_frames(20)
+	Input.action_release(&"move_right")
+	check(game.player.cell == spawn, "the chef cannot walk during the card",
+		"moved to %s" % game.player.cell)
+	check(is_equal_approx(GameState.time_left, clock), "the clock does not run during the card",
+		"clock went %.2f -> %.2f" % [clock, GameState.time_left])
+
+	# Run out the card.
+	var guard := 0
+	while game.phase == Game.Phase.INTRO and guard < 600:
+		await get_tree().process_frame
+		guard += 1
+	check(game.phase == Game.Phase.PLAYING, "the card hands over to play",
+		"phase is %d after %d frames" % [game.phase, guard])
+
+	# And the chef is live again.
+	var after := game.player.cell
+	Input.action_press(&"move_right")
+	await harness_frames(20)
+	Input.action_release(&"move_right")
+	check(game.player.cell != after, "the chef moves once play starts",
+		"still at %s" % game.player.cell)
+	game.queue_free()
+	await get_tree().process_frame
+
+
+## Serve the required burgers on every level in turn and confirm the run walks
+## itself to the win screen rather than stalling in a phase.
+func _test_full_run_reaches_the_win_screen() -> void:
+	_begin("full run")
+	var game := Game.new()
+	add_child(game)
+	GameState.reset_run()
+
+	# The win screen calls back into the title scene, which does not exist
+	# under a bare Game, so stop the run just short of that.
+	var reached_all_clear := false
+	var levels_seen := 0
+
+	for level_i in LevelData.count():
+		game.start_level(level_i)
+		check(game.phase == Game.Phase.INTRO,
+			"level %d opens on its card" % (level_i + 1))
+		# Skip the card and the clear banner.
+		await _run_phase_out(game, Game.Phase.PLAYING)
+		check(game.phase == Game.Phase.PLAYING, "level %d is playable" % (level_i + 1),
+			"phase is %d" % game.phase)
+
+		# Serve the target through the real scoring path.
+		var table := game.board.table_cells()[0]
+		game.player.place(table)
+		var guard := 0
+		while GameState.burgers_served < GameState.burgers_target and guard < 20:
+			_assemble(game)
+			guard += 1
+		check(GameState.burgers_served >= GameState.burgers_target,
+			"level %d can actually reach its target" % (level_i + 1),
+			"stalled at %d/%d" % [GameState.burgers_served, GameState.burgers_target])
+		check(game.phase == Game.Phase.LEVEL_CLEAR,
+			"level %d clears on its target" % (level_i + 1),
+			"phase is %d at %d/%d" % [game.phase, GameState.burgers_served, GameState.burgers_target])
+		levels_seen += 1
+
+		if level_i + 1 < LevelData.count():
+			await _run_phase_out(game, Game.Phase.INTRO)
+			check(game.phase == Game.Phase.INTRO,
+				"level %d hands over to the next card" % (level_i + 2),
+				"phase is %d" % game.phase)
+		else:
+			await _run_phase_out(game, Game.Phase.ALL_CLEAR)
+			reached_all_clear = game.phase == Game.Phase.ALL_CLEAR
+			check(reached_all_clear, "the last level ends in a win",
+				"phase is %d" % game.phase)
+
+	check(levels_seen == LevelData.count(), "every level was played",
+		"%d of %d" % [levels_seen, LevelData.count()])
+	check(reached_all_clear, "the run reaches the win screen")
+	check(GameState.level_index == LevelData.count() - 1, "the run ends on the last level",
+		"stopped at level index %d" % GameState.level_index)
+	game.queue_free()
+	await get_tree().process_frame
+
+
+## Waits for a phase timer to run down, without spinning forever if it will not.
+func _run_phase_out(game: Game, until: int) -> void:
+	var guard := 0
+	while game.phase != until and guard < 900:
+		await get_tree().process_frame
+		guard += 1
+
+
+## Builds and serves one perfect burger the way the player would. Clears the
+## counter first: a level's target outnumbers its counters, so the same surface
+## has to be reused, and a stack left complete never reads as a burger again.
+func _assemble(game: Game) -> void:
+	var table := game.board.table_cells()[0]
+	game.board.clear_table(table)
+	game.player.place(table)
+	var need: Array = [Food.Kind.BUN_BOTTOM, Food.Kind.LETTUCE, Food.Kind.BUN_TOP]
+	for kind in need:
+		game.player.tray.append(kind)
+		game.player._place_one()
+		game.player.tray.clear()
 
 
 func harness_frames(count: int) -> void:

@@ -39,6 +39,8 @@ func _draw() -> void:
 			_banner("PAUSED", Color("f4f4ff"))
 		else:
 			match game.phase:
+				Game.Phase.INTRO:
+					_level_card()
 				Game.Phase.LEVEL_CLEAR:
 					_banner("LEVEL CLEAR!", Color("6fc24a"))
 				Game.Phase.TIME_UP:
@@ -47,6 +49,35 @@ func _draw() -> void:
 					_banner("GAME OVER", Color("e2453c"))
 				Game.Phase.ALL_CLEAR:
 					_banner("YOU WIN!", Color("f5c53a"))
+
+
+## The card that names the level and the job before the chef moves.
+func _level_card() -> void:
+	if game.level == null:
+		return
+	var w := size.x
+	var h := size.y
+	var card := Rect2(w * 0.5 - 68.0, h * 0.5 - 34.0, 136.0, 68.0)
+	draw_rect(card, Color(0.04, 0.04, 0.09, 0.92))
+	draw_rect(card, Cfg.COL_PLATFORM_EDGE, false, 2.0)
+
+	_centered(card.position.y + 16.0, "LEVEL %d" % (GameState.level_index + 1), Color("f5c53a"), FONT_SIZE + 2)
+	_centered(card.position.y + 30.0, game.level.name, Color("f4f4ff"), FONT_SIZE)
+	_centered(card.position.y + 46.0, "COOK %d BURGERS" % GameState.burgers_target, Color("6fc24a"), FONT_SIZE)
+	_centered(card.position.y + 60.0, "IN %d:%02d" % _minutes(), Color("e8b4b0"), FONT_SIZE)
+
+
+## Seconds left as whole minutes and seconds, for the card.
+func _minutes() -> Array:
+	var total := int(ceil(maxf(GameState.time_left, 0.0)))
+	return [total / 60, total % 60]
+
+
+func _centered(y: float, text: String, color: Color, font_size: int) -> void:
+	var text_w := _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	var at := Vector2((size.x - text_w) * 0.5, y)
+	draw_string_outline(_font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, 2, Cfg.COL_OUTLINE)
+	draw_string(_font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
 
 
 func _draw_lives(at: Vector2) -> void:

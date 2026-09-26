@@ -3,7 +3,7 @@ extends Node2D
 ## Owns one level: builds the board, spawns actors, runs the clock, and drives
 ## the win/lose flow.
 
-enum Phase { PLAYING, LEVEL_CLEAR, TIME_UP, GAME_OVER, ALL_CLEAR }
+enum Phase { INTRO, PLAYING, LEVEL_CLEAR, TIME_UP, GAME_OVER, ALL_CLEAR }
 
 ## How long a result banner stays up before moving on.
 const PHASE_TIME := 2.6
@@ -47,9 +47,10 @@ func start_level(index: int) -> void:
 	_spawn_enemies()
 
 	_popups.clear()
-	_phase_t = 0.0
 	paused = false
-	phase = Phase.PLAYING
+	_set_player_active(false)
+	phase = Phase.INTRO
+	_phase_t = Cfg.INTRO_TIME
 	if hud != null:
 		hud.queue_redraw()
 
@@ -124,6 +125,8 @@ func _process(delta: float) -> void:
 		return
 
 	match phase:
+		# Everything that is not PLAYING just runs its phase timer down, which
+		# includes the level card, so INTRO deliberately falls through here.
 		Phase.PLAYING:
 			GameState.tick(delta)
 			if GameState.time_left <= 0.0:
@@ -138,25 +141,41 @@ func _process(delta: float) -> void:
 		hud.queue_redraw()
 
 
+## The chef only moves and is only hit while the level is actually running.
+func _set_player_active(active: bool) -> void:
+	if player != null and is_instance_valid(player):
+		player.set_process(active)
+
+
 func _enter(next: Phase) -> void:
 	phase = next
 	_phase_t = PHASE_TIME
 	match next:
+		Phase.INTRO:
+			pass
+		Phase.PLAYING:
+			_set_player_active(true)
 		Phase.LEVEL_CLEAR:
+			_set_player_active(false)
 			_popup("LEVEL CLEAR!", Color("6fc24a"))
 			GameState.save_progress()
 		Phase.TIME_UP:
+			_set_player_active(false)
 			_popup("TIME UP", Color("e2453c"))
 		Phase.GAME_OVER:
+			_set_player_active(false)
 			_popup("GAME OVER", Color("e2453c"))
 			GameState.save_progress()
 		Phase.ALL_CLEAR:
+			_set_player_active(false)
 			_popup("YOU WIN!", Color("f5c53a"))
 			GameState.save_progress()
 
 
 func _advance() -> void:
 	match phase:
+		Phase.INTRO:
+			_enter(Phase.PLAYING)
 		Phase.LEVEL_CLEAR:
 			var next_index := GameState.level_index + 1
 			if next_index < LevelData.count():

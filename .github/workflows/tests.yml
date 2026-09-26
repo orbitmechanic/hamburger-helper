@@ -28,13 +28,8 @@ jobs:
       - name: Import project
         run: godot --headless --import
 
-      - name: Run test suite
-        # tests/run.sh, not the bare scene: a GDScript runtime error inside a
-        # test aborts that test silently and the suite can still print PASS.
+      - name: Test suite and scene boots
+        # run.sh covers the scenes too. Booting a scene does not fail on a
+        # broken script: a parse error still exits 0, so a smoke test that
+        # only checks the exit code is not a smoke test.
         run: ./tests/run.sh
-
-      - name: Smoke test both scenes
-        run: |
-          set -euo pipefail
-          timeout 60 godot --headless --quit-after 240
-          timeout 60 godot --headless scenes/game.tscn --quit-after 600
