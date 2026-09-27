@@ -143,6 +143,8 @@ func _step_normal(horiz: int, up: bool, down: bool) -> void:
 
 	facing = horiz
 	var target := cell + Vector2i(horiz, 0)
+	# Deliberately not can_enter(): walking into something solid is meaningful
+	# here, because bumping a dispenser is how the chef picks food up.
 	if not in_bounds(target):
 		return
 	if board.blocks_player(target):
@@ -171,7 +173,7 @@ func _bump_dispenser(dispenser: Vector2i) -> void:
 
 func _step_dash() -> void:
 	var target := cell + Vector2i(facing, 0)
-	if not in_bounds(target) or board.blocks_player(target):
+	if not can_enter(target):
 		state = St.NORMAL
 		_dash_left = 0
 		return
@@ -186,7 +188,7 @@ func _step_fall(horiz: int) -> void:
 	# One nudge of air control per fall, then gravity has you.
 	if horiz != 0 and _steer_used < 1:
 		var side := cell + Vector2i(horiz, 0)
-		if in_bounds(side) and not board.blocks_player(side):
+		if can_enter(side):
 			_steer_used += 1
 			begin_step(side, Cfg.STEP_WALK)
 			return
@@ -197,7 +199,7 @@ func _step_climb(horiz: int, up: bool, down: bool) -> void:
 	if horiz != 0:
 		var target := cell + Vector2i(horiz, 0)
 		facing = horiz
-		if can_stand(target):
+		if can_enter(target):
 			state = St.CLIMB if board.is_ladder(target) else St.NORMAL
 			begin_step(target, Cfg.STEP_WALK)
 		return
@@ -217,7 +219,7 @@ func _try_climb(dir: Vector2i) -> bool:
 		return false
 
 	if dir == Vector2i.UP:
-		if ladder_ahead or can_stand(ahead):
+		if ladder_ahead or can_enter(ahead):
 			state = St.CLIMB
 			_steer_used = 0
 			begin_step(ahead, Cfg.STEP_CLIMB)
@@ -230,7 +232,7 @@ func _try_climb(dir: Vector2i) -> bool:
 		_steer_used = 0
 		begin_step(ahead, Cfg.STEP_CLIMB)
 		return true
-	if on_ladder and can_stand(ahead):
+	if on_ladder and can_enter(ahead):
 		state = St.NORMAL
 		begin_step(ahead, Cfg.STEP_WALK)
 		return true

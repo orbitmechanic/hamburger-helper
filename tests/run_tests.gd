@@ -33,6 +33,8 @@ func _run() -> void:
 	await _test_take_from_table()
 	await _test_walking()
 	await _test_climbing()
+	await _test_leaving_a_ladder()
+	await _test_climbing_off_the_top()
 	await _test_tray_capacity()
 	await _test_respawn_grace()
 	await _test_every_level_starts()
@@ -289,6 +291,107 @@ func _test_walking() -> void:
 	check(harness.player.cell.x > start_x, "holding right walks the chef right",
 		"x stayed at %d" % start_x)
 	check(harness.player.state == Player.St.NORMAL, "he ends up standing, not mid-air")
+	harness.teardown()
+
+
+## A ladder has to be leavable. The chef can get onto one, and if he cannot get
+## off again he is stuck until the clock runs out, which is exactly what shipped:
+## stepping off asked can_stand(), which is the question of what holds weight up,
+## and open floor - the space the chef walks in - is not something that can.
+func _test_leaving_a_ladder() -> void:
+	_begin("leaving a ladder")
+	var harness := _Harness.new(self)
+	await harness.setup(0)
+	var player := harness.player
+	var board := harness.board
+
+	# Walk left to the long ladder on the west wall.
+	Input.action_press(&"move_left")
+	var guard := 0
+	while player.cell.x > 1 and guard < 200:
+		await harness.frame()
+		guard += 1
+	Input.action_release(&"move_left")
+	await harness.frames(12)
+	check(player.cell.x == 1, "the chef reaches the west ladder", "x is %d" % player.cell.x)
+	check(board.is_ladder(player.cell), "and is standing on a ladder")
+
+	# Climb up it, then let go of up so the next input is unambiguous.
+	Input.action_press(&"move_up")
+	guard = 0
+	while player.cell.y > 9 and guard < 200:
+		await harness.frame()
+		guard += 1
+	Input.action_release(&"move_up")
+	await harness.frames(10)
+	var on_ladder := player.cell
+	check(board.is_ladder(on_ladder), "the chef is up on the ladder",
+		"cell is %s" % str(on_ladder))
+	check(on_ladder.y < 12, "and he climbed", "y is %d" % on_ladder.y)
+
+	# Now step off sideways, which is what a player does when they get fed up.
+	var off := on_ladder + Vector2i.RIGHT
+	check(player.can_enter(off), "the cell beside the ladder is enterable",
+		"cell %s is tile %d" % [str(off), board.tile_at(off)])
+	Input.action_press(&"move_right")
+	await harness.frames(16)
+	Input.action_release(&"move_right")
+	check(not board.is_ladder(player.cell), "the chef gets off the ladder",
+		"still on %s" % str(player.cell))
+	check(player.cell.x > 1, "and is no longer stuck against the west wall",
+		"x is %d" % player.cell.x)
+	# He steps off into open floor, so give him however long the drop takes.
+	guard = 0
+	while player.state == Player.St.FALL and guard < 400:
+		await harness.frame()
+		guard += 1
+	check(player.state != Player.St.FALL, "and has landed", "state is %d" % player.state)
+	harness.teardown()
+
+
+## The other way off a ladder: carry on up past the top rung and step onto the
+## floor above. Same predicate as stepping sideways, so it shipped broken too.
+func _test_climbing_off_the_top() -> void:
+	_begin("climbing off the top")
+	var harness := _Harness.new(self)
+	await harness.setup(0)
+	var player := harness.player
+	var board := harness.board
+
+	Input.action_press(&"move_left")
+	var guard := 0
+	while player.cell.x > 1 and guard < 200:
+		await harness.frame()
+		guard += 1
+	Input.action_release(&"move_left")
+	await harness.frames(12)
+
+	# Ride the west ladder all the way to its topmost rung.
+	Input.action_press(&"move_up")
+	guard = 0
+	while board.is_ladder(player.cell + Vector2i.UP) and guard < 300:
+		await harness.frame()
+		guard += 1
+	Input.action_release(&"move_up")
+	await harness.frames(10)
+	var top := player.cell
+	check(board.is_ladder(top), "the chef is on the topmost rung",
+		"cell is %s" % str(top))
+	check(not board.is_ladder(top + Vector2i.UP),
+		"with open floor above it", "above is %s" % str(top + Vector2i.UP))
+
+	# Keep holding up: that should carry him off the ladder, not pin him to it.
+	Input.action_press(&"move_up")
+	guard = 0
+	while board.is_ladder(player.cell) and guard < 300:
+		await harness.frame()
+		guard += 1
+	Input.action_release(&"move_up")
+	await harness.frames(20)
+	check(not board.is_ladder(player.cell), "holding up carries him off the top",
+		"still on %s" % str(player.cell))
+	check(player.cell.y <= top.y, "and he did not sink back down",
+		"y went from %d to %d" % [top.y, player.cell.y])
 	harness.teardown()
 
 

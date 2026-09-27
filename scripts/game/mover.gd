@@ -64,7 +64,13 @@ func in_bounds(c: Vector2i) -> bool:
 	return c.x >= 0 and c.y >= 0 and c.x < Cfg.GRID_W and c.y < Cfg.GRID_H
 
 
-## Can the player stand here: in bounds, not a wall, and has something to
-## stand on (a platform, a counter, or a ladder holding them up).
-func can_stand(c: Vector2i) -> bool:
-	return in_bounds(c) and not board.blocks_player(c) and board.supports_actor(c)
+## Whether a mover can step into this cell: in bounds and not solid to it.
+##
+## This is the whole movement rule, and it deliberately does not ask whether the
+## cell can support weight. The chef walks through the open space *above* a
+## platform, so open floor is somewhere he belongs even though nothing can rest
+## on it. board.supports_actor() answers the different question of what holds a
+## falling ingredient up, and using it here is what used to strand the chef on
+## every ladder: stepping off one needs can_enter(), not supports_actor().
+func can_enter(c: Vector2i) -> bool:
+	return in_bounds(c) and not board.blocks_player(c)
