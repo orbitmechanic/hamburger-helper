@@ -4,8 +4,8 @@ extends Node
 ##
 ## This exists because of a bug that every other check missed. Level teardown
 ## cleared every child of the Game node, which included the scene's own HUD, so
-## the score, the clock and the level card were destroyed by the first
-## start_level and had never once been drawn. All 106 headless checks passed the
+## the score and the level card were destroyed by the first start_level and
+## had never once been drawn. All 106 headless checks passed the
 ## whole time: they build a bare Game.new() with no scene, and a headless boot
 ## cannot see pixels. It took looking at an actual capture to find it.
 ##
@@ -28,13 +28,17 @@ const SHOT_DIR_DEFAULT := "/tmp/hamburger-helper"
 ## panel, and the platform tan. Chosen from Cfg, not hardcoded twice.
 const HUD_TEXT := Cfg.COL_PLATE
 const PLATFORM := Cfg.COL_PLATFORM
-## Smallest share of the image each thing may cover. Set from what the real
-## levels draw, with roughly half again as much margin as the thinnest one:
-## the HUD is sparsest on the level card, the card panel when it is up, and the
-## platform tan on level 1, which is a smaller board than 2-4.
+## Smallest share of the image each thing may cover. The HUD and the card panel
+## are set from what the real captures draw, with roughly half again as much
+## margin as the thinnest one. The level share is deliberately not set that way:
+## a real level covers about 20% of the frame with platform tan, and pinning a
+## smoke test 0.08% under the measured value means any change to a level's shape
+## fails here for no reason. A blank frame is 0% and a drawn one is 20%, so 12%
+## still catches "the board never got built" with room to move.
 const MIN_HUD_SHARE := 0.0015
 const MIN_CARD_SHARE := 0.05
-const MIN_LEVEL_SHARE := 0.20
+const MIN_LEVEL_SHARE := 0.12
+
 ## How far a channel may drift and still count. Godot's own capture path and the
 ## X11 one that preceded it can land on adjacent values around a flat fill.
 const TOLERANCE := 2
@@ -67,7 +71,7 @@ func _run() -> void:
 	# The HUD's text colour. Zero of these means the HUD is not being drawn at
 	# all, which is exactly what the teardown bug caused.
 	for shot in ["02-level1-card", "03-level1-play", "04-level2-play",
-			"05-level3-play", "06-level4-play"]:
+			"05-level3-play"]:
 		_check_share("%s draws HUD text" % shot, shot, HUD_TEXT, MIN_HUD_SHARE)
 
 	# The level card's panel: present over the card, gone once play starts. It
@@ -78,18 +82,20 @@ func _run() -> void:
 	_check_share("level card is cleared for play", "03-level1-play", card, 0.0)
 
 	# A frame that is only background means the level failed to build or draw.
-	for shot in ["03-level1-play", "04-level2-play", "05-level3-play", "06-level4-play"]:
+	for shot in ["03-level1-play", "04-level2-play", "05-level3-play"]:
 		_check_share("%s draws the level" % shot, shot, PLATFORM, MIN_LEVEL_SHARE)
 
 	# No two captures may be the same picture. A stale capture comes back
 	# byte-identical to whatever was on screen before, which is how a level-4
 	# shot once showed the title screen.
-	for pair in [["01-title", "02-level1-card", "title and level card"],
-			["02-level1-card", "03-level1-play", "level card and play"],
-			["03-level1-play", "04-level2-play", "level 1 and 2"],
-			["04-level2-play", "05-level3-play", "level 2 and 3"],
-			["05-level3-play", "06-level4-play", "level 3 and 4"],
-			["01-title", "06-level4-play", "title and level 4"]]:
+	var pairs := [
+		["01-title", "02-level1-card", "title and level card"],
+		["02-level1-card", "03-level1-play", "level card and play"],
+		["03-level1-play", "04-level2-play", "level 1 and 2"],
+		["04-level2-play", "05-level3-play", "level 2 and 3"],
+		["01-title", "05-level3-play", "title and level 3"],
+	]
+	for pair in pairs:
 		_check_distinct(pair[0], pair[1], "%s differ" % pair[2])
 
 

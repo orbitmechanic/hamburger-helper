@@ -25,8 +25,7 @@ func _draw() -> void:
 	var base := Vector2(w * 0.5, h * 0.56)
 	var layers := [
 		Food.Kind.BUN_BOTTOM,
-		Food.Kind.MEAT,
-		Food.Kind.CHEESE,
+		Food.Kind.PATTY,
 		Food.Kind.LETTUCE,
 		Food.Kind.TOMATO,
 		Food.Kind.BUN_TOP,
@@ -41,8 +40,9 @@ func _draw() -> void:
 	_title(Vector2(w * 0.5, 34.0), "HAMBURGER", Color("f5c53a"), 20)
 	_title(Vector2(w * 0.5, 52.0), "HELPER", Color("e2453c"), 20)
 
-	_center(Vector2(w * 0.5, h - 52.0), "ARROWS OR WASD TO MOVE   X TO GRAB", Color("f4f4ff"), 8)
-	_center(Vector2(w * 0.5, h - 42.0), "Z TO THROW   P TO PAUSE", Color("9a9ac0"), 8)
+	_center(Vector2(w * 0.5, h - 62.0), "WALK ALL THE WAY ACROSS FOOD TO DROP IT", Color("f4f4ff"), 8)
+	_center(Vector2(w * 0.5, h - 52.0), "ARROWS OR WASD TO MOVE   UP AND DOWN ON LADDERS", Color("9a9ac0"), 8)
+	_center(Vector2(w * 0.5, h - 42.0), "X TO JUMP   P TO PAUSE", Color("9a9ac0"), 8)
 
 	if fmod(_t, 1.0) < 0.65:
 		_center(Vector2(w * 0.5, h - 24.0), "PRESS SPACE", Color("6fc24a"), 10)

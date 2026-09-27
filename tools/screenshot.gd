@@ -71,8 +71,9 @@ func _ready() -> void:
 	# is indistinguishable from a scene that never started, which is exactly the
 	# mistake worth catching here.
 	if "phase" in inst:
-		print("state: phase=%s time_left=%.2f" % [
-			str(inst.phase), float(GameState.time_left)])
+		print("state: phase=%s chefs=%d burgers=%d/%d" % [
+			str(inst.phase), GameState.chefs, GameState.burgers_done,
+			GameState.burgers_target])
 
 	# Waiting on the scene's own phase beats a tuned frame count, because a wrong
 	# guess fails loudly here instead of quietly writing a picture of the wrong

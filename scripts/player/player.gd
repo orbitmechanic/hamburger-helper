@@ -1,401 +1,231 @@
 class_name Player
 extends Mover
-## The chef: walks the counters, climbs ladders, runs along surfaces when he
-## presses into one, and carries a tray of ingredients overhead.
+## The chef.
 ##
-## Note that resting ingredients never block him - he walks over loose food and
-## picks it up, which is why picking up is a deliberate action rather than
-## automatic.
+## He does not carry anything. The whole game is walking across a burger part so
+## that it drops one level, so the things that used to be the core of this script
+## - the tray, the stack on it, grabbing, throwing, salting - are gone. What is
+## left is movement across the grid plus one rule: notice which part of which
+## ingredient he has walked over, and knock it down when he has covered the lot.
 
-signal served(points: int, cell: Vector2i)
-signal died
-signal tray_changed
-signal want_ingredient(cell: Vector2i, kind: Food.Kind)
-signal want_salt(cell: Vector2i, facing: int)
+## Emitted with the ingredient he just walked the full width of.
+signal crossed(ing: Ingredient)
 
-enum St { NORMAL, CLIMB, FALL, DASH, HURT, DEAD }
+enum St { WALK, CLIMB, FALL, JUMP }
 
-## How many ingredients fit on the tray at once.
-const TRAY_MAX := 3
-## Sentinel tray value for a salt packet rather than food.
-const SALT := -1
-## Cells travelled by one counter run.
-const DASH_STEPS := 7
-## Seconds of invulnerability after being hit.
-const HURT_TIME := 1.6
-## Seconds after respawning during which the chef cannot be caught again.
-## The spawn pad is where the chef died, so without this the enemy that landed
-## the hit is still standing there and the run ends without any input at all.
-const GRACE_TIME := 1.2
-## Seconds the death animation holds before respawning.
-const DEAD_TIME := 0.9
-## Minimum gap between two items from the same dispenser.
-const DISPENSER_COOLDOWN := 0.3
+const JUMP_DUR := 0.17
+## Peak of the hop, in pixels. A one-cell hop that clears an enemy but not much
+## more: the jump is a dodge, not a way to climb a storey.
+const JUMP_LIFT := 13.0
+const PEPPER_TIME := 5.0
 
-var state: St = St.NORMAL
-## Foods and salt packets on the tray; index 0 is the bottom of the pile.
-var tray: Array = []
 var facing := 1
+var state: St = St.WALK
+## Pepper charges in the jar, and how long the current dose lasts.
+var pepper_left := 0
+var pepper_time := 0.0
 
-var _dash_left := 0
-var _disp_cd := 0.0
-var _hurt_t := 0.0
-var _dead_t := 0.0
-var _grace_t := 0.0
-var _anim_t := 0.0
-var _steer_used := 0
+## The ingredient currently being walked over, and which of its cells have been
+## covered. A part is only pushed when every one of them has been.
+var _cross: Ingredient = null
+var _covered := {}
 
 
-func _ready() -> void:
+func setup(p_board: Board, start: Vector2i) -> void:
+	board = p_board
+	place(start)
+	facing = 1
 	z_index = 10
+	queue_redraw()
+
+
+## Puts the chef somewhere, clearing any crossing in progress. Used for the start
+## of a level and for a respawn after being caught: either way a part the chef was
+## halfway across must not stay half counted, or respawning on top of a part would
+## knock it down without the chef having walked anywhere.
+func place(at: Vector2i) -> void:
+	super.place(at)
+	_cross = null
+	_covered.clear()
+	moving = false
+	state = St.WALK
 
 
 func _process(delta: float) -> void:
-	_anim_t += delta
-	_disp_cd = maxf(0.0, _disp_cd - delta)
-	_grace_t = maxf(0.0, _grace_t - delta)
-
-	if state == St.DEAD:
-		_dead_t -= delta
-		if _dead_t <= 0.0:
-			respawn()
-		queue_redraw()
-		return
-
-	if state == St.HURT:
-		_hurt_t -= delta
-		if _hurt_t <= 0.0:
-			state = St.NORMAL
-		queue_redraw()
-		return
-
-	if tick_step(delta):
-		_on_step_end()
-
-	_handle_actions()
-	if not moving:
-		_decide()
-	queue_redraw()
+	if pepper_time > 0.0:
+		pepper_time = maxf(pepper_time - delta, 0.0)
+	_drive()
+	var done := tick_step(delta)
+	# The hop arc is applied on top of the linear cell-to-cell interpolation, so
+	# the jump still ends exactly on a grid cell.
+	if state == St.JUMP and moving:
+		position.y -= sin(PI * step_phase()) * JUMP_LIFT
+	if done:
+		_arrived()
 
 
-func respawn() -> void:
-	place(board.player_spawn)
-	state = St.NORMAL
-	_grace_t = GRACE_TIME
-	_dash_left = 0
-	_steer_used = 0
-	tray.clear()
-	tray_changed.emit()
-	queue_redraw()
+## Whether enemies should pass harmlessly through him right now.
+func ghost() -> bool:
+	return pepper_time > 0.0
 
 
-## Called when an enemy catches the chef. Returns true if it actually landed.
-func hit() -> bool:
-	if state == St.HURT or state == St.DEAD or _grace_t > 0.0:
+func add_pepper(charges: int = 1) -> void:
+	pepper_left += charges
+
+
+func use_pepper() -> bool:
+	if pepper_left <= 0:
 		return false
-	GameState.lose_life()
-	_drop_tray()
-	state = St.DEAD
-	_dead_t = DEAD_TIME
-	died.emit()
+	pepper_left -= 1
+	pepper_time = PEPPER_TIME
 	return true
 
 
 # --- Input -----------------------------------------------------------------
 
 
-func _handle_actions() -> void:
-	if Input.is_action_just_pressed(&"jump"):
-		_toggle_carry()
-	if Input.is_action_just_pressed(&"throw"):
-		_throw_tray()
-
-
-func _decide() -> void:
-	var left := Input.is_action_pressed(&"move_left")
-	var right := Input.is_action_pressed(&"move_right")
-	var up := Input.is_action_pressed(&"move_up")
-	var down := Input.is_action_pressed(&"move_down")
-	var horiz := 0
-	if left and not right:
-		horiz = -1
-	elif right and not left:
-		horiz = 1
-
-	match state:
-		St.DASH:
-			_step_dash()
-		St.FALL:
-			_step_fall(horiz)
-		St.CLIMB:
-			_step_climb(horiz, up, down)
-		_:
-			_step_normal(horiz, up, down)
-
-
-func _step_normal(horiz: int, up: bool, down: bool) -> void:
-	if up and _try_climb(Vector2i.UP):
+func _drive() -> void:
+	if moving:
 		return
-	if down and _try_climb(Vector2i.DOWN):
-		return
-	if horiz == 0:
+	if state == St.FALL:
+		_start_fall()
 		return
 
-	facing = horiz
-	var target := cell + Vector2i(horiz, 0)
-	# Deliberately not can_enter(): walking into something solid is meaningful
-	# here, because bumping a dispenser is how the chef picks food up.
-	if not in_bounds(target):
+	var want := Vector2i.ZERO
+	if Input.is_action_pressed(&"move_left"):
+		want = Vector2i.LEFT
+	elif Input.is_action_pressed(&"move_right"):
+		want = Vector2i.RIGHT
+	elif Input.is_action_pressed(&"move_up"):
+		want = Vector2i.UP
+	elif Input.is_action_pressed(&"move_down"):
+		want = Vector2i.DOWN
+	elif Input.is_action_just_pressed(&"jump") and _can_jump():
+		_begin_jump()
+		return
+
+	if want != Vector2i.ZERO:
+		_step(want)
+
+
+func _step(dir: Vector2i) -> void:
+	if dir == Vector2i.UP or dir == Vector2i.DOWN:
+		_climb(dir)
+		return
+	# Walking into a wall turns the chef round rather than stopping him, which is
+	# what lets you hold a direction and pace back and forth over a part.
+	if board.blocks_player(cell + dir):
+		facing = -facing
+		return
+	facing = dir.x
+	begin_step(cell + dir, Cfg.STEP_WALK)
+
+
+func _climb(dir: Vector2i) -> void:
+	var target := cell + dir
+	# Rows are only connected by a ladder, and the chef has to be able to stand at
+	# the far end of the climb - otherwise he can climb halfway up and be stuck.
+	if not (board.is_ladder(cell) or board.is_ladder(target)):
 		return
 	if board.blocks_player(target):
-		if board.is_dispenser(target):
-			_bump_dispenser(target)
-			return
-		# Pressing into a counter starts a run along its top edge, the same
-		# way the original lets you cross a gap you would normally fall into.
-		state = St.DASH
-		_dash_left = DASH_STEPS
 		return
-	begin_step(target, Cfg.STEP_WALK)
-
-
-## Walking into a dispenser ejects its next item at the chef's feet. Held over
-## long enough it keeps producing, but not faster than this.
-func _bump_dispenser(dispenser: Vector2i) -> void:
-	if _disp_cd > 0.0:
+	if not (board.is_ladder(target) or board.floor_below(target)):
 		return
-	var kind := board.bump_dispenser(dispenser)
-	if kind < 0:
+	state = St.CLIMB
+	begin_step(target, Cfg.STEP_CLIMB)
+
+
+func _can_jump() -> bool:
+	if state == St.CLIMB:
+		return false
+	return not board.blocks_player(cell + Vector2i(facing, 0))
+
+
+func _begin_jump() -> void:
+	state = St.JUMP
+	begin_step(cell + Vector2i(facing, 0), JUMP_DUR)
+
+
+func _start_fall() -> void:
+	if _supported():
+		state = St.WALK
 		return
-	_disp_cd = DISPENSER_COOLDOWN
-	want_ingredient.emit(cell, kind)
-
-
-func _step_dash() -> void:
-	var target := cell + Vector2i(facing, 0)
-	if not can_enter(target):
-		state = St.NORMAL
-		_dash_left = 0
-		return
-	begin_step(target, Cfg.STEP_DASH)
-	_dash_left -= 1
-	if _dash_left <= 0:
-		state = St.NORMAL
-		_dash_left = 0
-
-
-func _step_fall(horiz: int) -> void:
-	# One nudge of air control per fall, then gravity has you.
-	if horiz != 0 and _steer_used < 1:
-		var side := cell + Vector2i(horiz, 0)
-		if can_enter(side):
-			_steer_used += 1
-			begin_step(side, Cfg.STEP_WALK)
-			return
+	state = St.FALL
 	begin_step(cell + Vector2i.DOWN, Cfg.STEP_FALL)
 
 
-func _step_climb(horiz: int, up: bool, down: bool) -> void:
-	if horiz != 0:
-		var target := cell + Vector2i(horiz, 0)
-		facing = horiz
-		if can_enter(target):
-			state = St.CLIMB if board.is_ladder(target) else St.NORMAL
-			begin_step(target, Cfg.STEP_WALK)
-		return
-	if up and _try_climb(Vector2i.UP):
-		return
-	if down and _try_climb(Vector2i.DOWN):
-		return
+## Whether the chef can stay put in the cell he is in. A ladder holds him up just
+## as well as a ledge does: without this he climbs one rung and immediately falls
+## back off, and can never get anywhere.
+func _supported() -> bool:
+	return board.is_ladder(cell) or board.floor_below(cell)
 
 
-## Attaches to a ladder if there is one at or above/below this cell, and steps
-## onto it. Returns false when there is no ladder to take.
-func _try_climb(dir: Vector2i) -> bool:
-	var on_ladder := board.is_ladder(cell)
-	var ahead := cell + dir
-	var ladder_ahead := board.is_ladder(ahead)
-	if not (on_ladder or ladder_ahead):
-		return false
-
-	if dir == Vector2i.UP:
-		if ladder_ahead or can_enter(ahead):
-			state = St.CLIMB
-			_steer_used = 0
-			begin_step(ahead, Cfg.STEP_CLIMB)
-			return true
-		return false
-
-	# Downwards: keep descending a ladder, or step off the bottom onto a floor.
-	if ladder_ahead:
-		state = St.CLIMB
-		_steer_used = 0
-		begin_step(ahead, Cfg.STEP_CLIMB)
-		return true
-	if on_ladder and can_enter(ahead):
-		state = St.NORMAL
-		begin_step(ahead, Cfg.STEP_WALK)
-		return true
-	return false
+# --- Arriving --------------------------------------------------------------
 
 
-func _on_step_end() -> void:
-	if state == St.DASH and _dash_left <= 0:
-		state = St.NORMAL
-
-	if state != St.FALL and not board.supports_actor(cell) and not board.blocks_player(cell):
+func _arrived() -> void:
+	if state == St.JUMP:
+		state = St.WALK
+	_track_crossing()
+	if not _supported():
 		state = St.FALL
-		_steer_used = 0
-
-	if state == St.FALL:
-		var below := cell + Vector2i.DOWN
-		if board.blocks_item(below) or board.is_ladder(below):
-			state = St.CLIMB if board.is_ladder(cell) else St.NORMAL
-
-
-# --- Carrying --------------------------------------------------------------
-
-
-func _toggle_carry() -> void:
-	if moving:
 		return
-	if tray.is_empty():
-		_take_one()
-	else:
-		_place_one()
+	if state == St.FALL or state == St.CLIMB:
+		state = St.WALK
+	queue_redraw()
 
 
-func _take_one() -> void:
-	if tray.size() >= TRAY_MAX:
-		return
-	if board.tile_at(cell) == Board.Tile.TABLE:
-		var from_table := board.pop_from_table(cell)
-		if from_table >= 0:
-			tray.append(from_table)
-			tray_changed.emit()
-			return
-	var occ := board.occupant_at(cell)
-	if occ is Ingredient:
-		tray.append(occ.kind)
-		board.clear_occupant(cell)
-		occ.queue_free()
-		tray_changed.emit()
-		return
-	if board.is_salt(cell):
-		tray.append(SALT)
-		tray_changed.emit()
+## Notices which cells of which ingredient the chef has stood in, and pushes the
+## part once he has been all the way across it. Crossing is measured in cells
+## covered rather than distance travelled, so pacing back and forth over a wide
+## part still works, and a part is never pushed by a brush against its edge.
+func _track_crossing() -> void:
+	var here := board.ingredient_at(cell)
+	if here != _cross:
+		_close_crossing()
+		_cross = here
+	if _cross != null:
+		_covered[cell] = true
 
 
-## Takes the item at the bottom of the tray. A tray of [bun, lettuce, lid]
-## therefore lands on the counter in the order a burger needs built.
-func _place_one() -> void:
-	var kind: int = tray.pop_front()
-	tray_changed.emit()
-	# Salt is a tray sentinel, not a food, and it has no resting state: a Salt
-	# packet slides along the counters and is spent. Placing one used to build
-	# an Ingredient with kind -1, which asked the food table for the colour of a
-	# burger part that does not exist and threw on every draw. Salt piles exist
-	# only where the level map puts them, so the only honest move is to throw it.
-	if kind == SALT:
-		want_salt.emit(cell, facing)
-		return
-	if board.tile_at(cell) == Board.Tile.TABLE:
-		var stack := board.push_to_table(cell, kind)
-		_credit_burger(stack)
-	else:
-		want_ingredient.emit(cell, kind)
-
-
-func _credit_burger(stack: Array) -> void:
-	if board.is_completed(cell):
-		return
-	if not board.stack_is_burger(stack):
-		return
-	board.mark_completed(cell)
-	var points := Food.burger_points(stack)
-	GameState.add_score(points)
-	GameState.burgers_served += 1
-	served.emit(points, cell)
-
-
-func _throw_tray() -> void:
-	for i in tray.size():
-		var kind: int = tray[i]
-		if kind == SALT:
-			want_salt.emit(cell, facing)
-		else:
-			var spot := cell
-			for step in 1 + i:
-				var ahead := spot + Vector2i(facing, 0)
-				if in_bounds(ahead) and not board.blocks_player(ahead):
-					spot = ahead
-				else:
-					break
-			want_ingredient.emit(spot, kind)
-	tray.clear()
-	tray_changed.emit()
-
-
-func _drop_tray() -> void:
-	for kind in tray:
-		if kind != SALT:
-			want_ingredient.emit(cell, kind)
-	tray.clear()
-	tray_changed.emit()
+func _close_crossing() -> void:
+	if _cross != null and _covered.size() >= _cross.cells.size():
+		crossed.emit(_cross)
+		_cross.knock()
+	_cross = null
+	_covered.clear()
 
 
 # --- Drawing ---------------------------------------------------------------
 
 
 func _draw() -> void:
-	if state == St.DEAD:
-		_draw_dead()
-		return
-	# Blink while invulnerable, whether that is the hurt stun or respawn grace.
-	if (state == St.HURT or _grace_t > 0.0) and fmod(_anim_t, 0.2) < 0.1:
-		return
+	var bob := 0
+	if moving and state != St.JUMP:
+		bob = -1 if sin(step_phase() * PI) > 0.0 else 0
+	var climbing := state == St.CLIMB
+	if climbing:
+		facing = 0
 
-	_draw_tray()
+	# Legs, then torso, then head and hat. Drawn from the feet up so the jump
+	# arc reads as a hop rather than a resize.
+	draw_rect(Rect2(-5, 2 + bob, 4, 6), Cfg.PLAYER_COOK_PANTS)
+	draw_rect(Rect2(1, 2 + bob, 4, 6), Cfg.PLAYER_COOK_PANTS)
+	draw_rect(Rect2(-6, -1 + bob, 12, 5), Cfg.PLAYER_COOK_SHIRT)
+	draw_rect(Rect2(-5, 4 + bob, 10, 2), Cfg.COL_OUTLINE)
+	draw_rect(Rect2(-4, -6 + bob, 8, 6), Cfg.PLAYER_COOK_SKIN)
+	# Chef's hat: a band and a puff on top.
+	draw_rect(Rect2(-5, -7 + bob, 10, 3), Cfg.PLAYER_COOK_HAT)
+	draw_rect(Rect2(-6, -10 + bob, 12, 4), Cfg.PLAYER_COOK_HAT)
+	draw_rect(Rect2(-6, -10 + bob, 12, 4), Cfg.COL_OUTLINE, false, 1.0)
+	# Eyes, which only show when he is facing a direction.
+	if facing != 0:
+		var ex := 2 * signi(facing)
+		draw_rect(Rect2(ex - 1, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
+		draw_rect(Rect2(ex + 1, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
 
-	# Mirror the whole chef about the cell centre so facing is one transform.
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2(facing, 1.0))
-	_part(Rect2(-5, -8, 10, 4), Cfg.PLAYER_COOK_HAT)
-	_part(Rect2(-4, -4, 8, 4), Cfg.PLAYER_COOK_SKIN)
-	_part(Rect2(-4, 0, 8, 6), Cfg.PLAYER_COOK_SHIRT)
-	var leg := 0
-	if moving:
-		leg = 1 if sin(_anim_t * 18.0) > 0.0 else 0
-	_part(Rect2(-4, 6, 3, 2), Cfg.PLAYER_COOK_PANTS)
-	_part(Rect2(1, 6, 3, 2), Cfg.PLAYER_COOK_PANTS)
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	if state == St.DASH:
-		# Speed lines trailing a counter run.
-		var tail := -float(facing) * (3.0 + 5.0 * step_phase())
-		draw_rect(Rect2(tail - 3, -2, 3, 2), Color(1, 1, 1, 0.5))
-		draw_rect(Rect2(tail - 5, 2, 5, 2), Color(1, 1, 1, 0.35))
-
-
-func _part(r: Rect2, col: Color) -> void:
-	draw_rect(r, col)
-	draw_rect(r, Cfg.COL_OUTLINE, false, 1.0)
-
-
-func _draw_tray() -> void:
-	for i in tray.size():
-		var kind: int = tray[i]
-		var y := -10 - i * 7
-		if kind == SALT:
-			_part(Rect2(-6, y, 12, 6), Cfg.COL_SALT)
-			draw_rect(Rect2(-6, y, 12, 2), Cfg.COL_SALT.darkened(0.2))
-			continue
-		var r := Rect2(-6, y, 12, 6)
-		draw_rect(r.grow(1.0), Cfg.COL_OUTLINE)
-		draw_rect(r, Food.color_of(kind))
-		draw_rect(Rect2(r.position, Vector2(r.size.x, 2)), Food.accent_of(kind))
-
-
-func _draw_dead() -> void:
-	var a := clampf(_dead_t / DEAD_TIME, 0.0, 1.0)
-	draw_rect(Rect2(-6, -6, 12, 12), Color(0.9, 0.3, 0.3, a))
-	draw_rect(Rect2(-4, -8, 8, 3), Color(Cfg.PLAYER_COOK_HAT, a))
+	# A pepper dose shows as a shimmer, so a ghosted chef is never a mystery.
+	if ghost():
+		draw_rect(Rect2(-7, -11 + bob, 14, 14), Cfg.COL_PEPPER, false, 1.0)
+	queue_redraw()

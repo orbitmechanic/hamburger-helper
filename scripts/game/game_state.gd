@@ -1,20 +1,28 @@
 extends Node
 ## Autoload holding progress that survives scene changes.
 ## Deliberately not `class_name`-d: the autoload name is GameState already.
+##
+## There is no clock. The original has no countdown either - the pressure is the
+## three nasties, and a chef who loses one waits for the next one rather than
+## racing a number. Everything here is about how far through the order the player
+## is and how many chefs are left to finish it.
 
 signal score_changed(score: int)
 signal level_changed(index: int)
-signal lives_changed(lives: int)
+signal chefs_changed(chefs: int)
 
-const START_LIVES := 3
+const START_CHEFS := 6
 const START_LEVEL := 0
 
 var score: int = 0
 var level_index: int = START_LEVEL
-var lives: int = START_LIVES
-var burgers_served: int = 0
+## Spare chefs. One is in the kitchen at all times, so the last one lost ends the
+## run, which is why this is the count of spares rather than lives.
+var chefs: int = START_CHEFS
+## How many burgers are finished on the plates so far this level.
+var burgers_done: int = 0
+## How many plates the level has, and therefore how many to win.
 var burgers_target: int = 0
-var time_left: float = 0.0
 var high_score: int = 0
 
 const SAVE_PATH := "user://hamburger_helper.save"
@@ -31,41 +39,41 @@ func add_score(amount: int) -> void:
 	score_changed.emit(score)
 
 
-func set_level(index: int, target: int, seconds: float) -> void:
+func set_level(index: int, target: int) -> void:
 	level_index = index
 	burgers_target = target
-	burgers_served = 0
-	time_left = seconds
+	burgers_done = 0
 	level_changed.emit(index)
 
 
-func set_time(seconds: float) -> void:
-	time_left = seconds
+func count_burger(points: int) -> void:
+	burgers_done += 1
+	add_score(points)
 
 
-func tick(delta: float) -> void:
-	if time_left > 0.0:
-		time_left = maxf(0.0, time_left - delta)
+func add_chef() -> void:
+	chefs += 1
+	chefs_changed.emit(chefs)
 
 
-func add_life() -> void:
-	lives += 1
-	lives_changed.emit(lives)
+func lose_chef() -> void:
+	chefs -= 1
+	chefs_changed.emit(chefs)
 
 
-func lose_life() -> void:
-	lives -= 1
-	lives_changed.emit(lives)
+## Whether the run is over: no spares left to send another chef out with.
+func out_of_chefs() -> bool:
+	return chefs <= 0
 
 
 func reset_run() -> void:
 	score = 0
 	level_index = START_LEVEL
-	lives = START_LIVES
-	burgers_served = 0
+	chefs = START_CHEFS
+	burgers_done = 0
 	score_changed.emit(score)
 	level_changed.emit(level_index)
-	lives_changed.emit(lives)
+	chefs_changed.emit(chefs)
 
 
 func save_progress() -> void:

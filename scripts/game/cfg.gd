@@ -33,12 +33,13 @@ const COL_PLATFORM_DARK := Color("8a6a42")
 const COL_PLATFORM_EDGE := Color("f0d0a0")
 const COL_WALL := Color("4a4a6a")
 const COL_LADDER := Color("e8c070")
-const COL_TABLE := Color("d8d8e8")
 const COL_PLATE := Color("f4f4ff")
 ## The level card panel. Partly transparent, so what lands in a capture is this
 ## composited over COL_BG rather than this on its own.
 const COL_CARD := Color(0.04, 0.04, 0.09, 0.92)
-const COL_SALT := Color("ffffff")
+## Pepper shimmer and the jar in the HUD.
+const COL_PEPPER := Color("f5e04a")
+const COL_BONUS := Color("6fc24a")
 const COL_OUTLINE := Color("14141f")
 
 const PLAYER_COOK_SKIN := Color("f2c8a0")

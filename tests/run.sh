@@ -63,7 +63,16 @@ fi
 # --- scene boots ------------------------------------------------------------
 # Short budgets on purpose: these only have to load, draw a few hundred frames
 # and exit. A longer run would just make a hang slower to notice.
-for scene in "title:" "game:scenes/game.tscn"; do
+#
+# The tools are in this list because they were not, and tools/visual_check.gd
+# sat with a parse error nobody could see: CI never loaded it, so a tool that
+# could not run looked exactly like a tool that had not been run. A tool scene
+# that needs captures or input reports that on stderr and exits non-zero, which
+# is fine here - reject() only looks for timeouts and script errors, not for the
+# tool's own opinion of whether it had what it needed.
+for scene in "title:" "game:scenes/game.tscn" \
+		"tool-levels:tools/check_levels.tscn" \
+		"tool-visual:tools/visual_check.tscn"; do
 	label="${scene%%:*}"
 	target="${scene#*:}"
 	# shellcheck disable=SC2086

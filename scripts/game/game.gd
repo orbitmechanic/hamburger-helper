@@ -1,12 +1,20 @@
 class_name Game
 extends Node2D
-## Owns one level: builds the board, spawns actors, runs the clock, and drives
-## the win/lose flow.
+## Owns one level: builds the board, drops the ingredients in, spawns the
+## nasties and the bonuses, and runs the win/lose flow.
+##
+## There is no countdown to run down. The only two ways a level ends are all the
+## plates filled and every chef used up.
 
-enum Phase { INTRO, PLAYING, LEVEL_CLEAR, TIME_UP, GAME_OVER, ALL_CLEAR }
+enum Phase { INTRO, PLAYING, LEVEL_CLEAR, GAME_OVER, ALL_CLEAR }
 
 ## How long a result banner stays up before moving on.
 const PHASE_TIME := 2.6
+## A pepper dose the level starts with, as in the original.
+const STARTING_PEPPER := 1
+## Seconds between random bonuses appearing, and how many can be out at once.
+const BONUS_EVERY := 11.0
+const BONUS_MAX := 2
 
 var board: Board
 var player: Player
@@ -20,6 +28,7 @@ var paused := false
 
 var _phase_t := 0.0
 var _popups: Array = []
+var _bonus_t := 0.0
 
 
 func _ready() -> void:
@@ -46,24 +55,34 @@ func _requested_level() -> int:
 func start_level(index: int) -> void:
 	_clear_actors()
 	level = LevelData.get_level(index)
-	GameState.set_level(index, level.target, level.seconds)
+	GameState.set_level(index, level.plates.size())
 
 	board = Board.new()
 	_actor_parent().add_child(board)
 	board.setup(level)
 
 	player = Player.new()
-	player.board = board
 	_actor_parent().add_child(player)
-	player.place(board.player_spawn)
-	player.want_ingredient.connect(_on_want_ingredient)
-	player.want_salt.connect(_on_want_salt)
-	player.died.connect(_on_player_died)
-	player.served.connect(_on_served)
+	player.setup(board, board.chef_spawn)
+	player.add_pepper(STARTING_PEPPER)
+	player.crossed.connect(_on_crossed)
+
+	# The ingredients are already placed in the map, so they are built here rather
+	# than pushed in by the chef. Each one is a run of cells; the width is part of
+	# the puzzle, since the chef has to cross all of it to move it.
+	for span in level.ingredients:
+		var ing := Ingredient.new()
+		_actor_parent().add_child(ing)
+		ing.setup(board, span)
+		ing.add_to_group(&"ingredients")
+		ing.dropped.connect(_on_ingredient_dropped)
+		ing.carried_rider.connect(_on_rider)
+		ing.boarded.connect(_on_ingredient_boarded)
 
 	_spawn_enemies()
 
 	_popups.clear()
+	_bonus_t = BONUS_EVERY
 	paused = false
 	_set_player_active(false)
 	phase = Phase.INTRO
@@ -96,54 +115,175 @@ func _clear_actors() -> void:
 
 
 func _spawn_enemies() -> void:
-	for cell in board.enemy_kinds:
-		var kind: Enemy.Kind = board.enemy_kinds[cell]
+	for cell in board.enemy_spawns:
+		var kind: Enemy.Kind = board.enemy_kinds.get(cell, Enemy.Kind.HOTDOG)
 		var enemy := Enemy.new()
 		_actor_parent().add_child(enemy)
 		enemy.setup(board, cell, kind, player)
 		enemy.add_to_group(&"enemies")
-		enemy.caught_player.connect(_on_enemy_caught)
+		enemy.squashed.connect(_on_enemy_squashed)
 
 
-# --- Signals from the player ------------------------------------------------
+# --- Crossing --------------------------------------------------------------
 
 
-func _on_want_ingredient(cell: Vector2i, kind: Food.Kind) -> void:
-	# Backstop for the whole class of bug: a bad kind reaching an Ingredient
-	# crashes in its _draw, which reads as the renderer failing rather than a
-	# caller passing nonsense, and it would do so every frame until reload.
-	if not Food.is_kind(kind):
-		push_warning("ignored an ingredient request for invalid kind %d" % kind)
+## The chef has walked the full width of a part, so it drops. A nasty standing on
+## it at that moment goes down with it, and the part falls two levels rather than
+## one - which is the whole reason to bait a nasty under a bun.
+func _on_crossed(ing: Ingredient) -> void:
+	var riders := 0
+	for e in get_tree().get_nodes_in_group(&"enemies"):
+		var enemy := e as Enemy
+		if enemy != null and is_instance_valid(enemy) and enemy.riding(ing):
+			riders += 1
+			enemy.attach(ing)
+	ing.knock(1 if riders > 0 else 0)
+
+
+func _on_rider() -> void:
+	GameState.add_score(Food.POINTS_RIDER)
+	_popup("RIDE!", Cfg.COL_BONUS)
+
+
+func _on_ingredient_dropped(floors: int, at: Vector2i) -> void:
+	GameState.add_score(floors * Food.POINTS_PER_FLOOR)
+
+
+## A part has reached a plate. If that finishes the burger it is worth scoring
+## and, if it was the last plate, the level.
+func _on_ingredient_boarded(plate: LevelData.Span) -> void:
+	GameState.add_score(Food.POINTS_PER_FLOOR)
+	if not Food.stack_is_burger(board.stack(plate.x)):
 		return
-	var ing := Ingredient.new()
-	_actor_parent().add_child(ing)
-	ing.setup(board, cell, kind)
+	GameState.count_burger(Food.burger_points(board.stack(plate.x).size()))
+	_popup("+%d" % Food.burger_points(board.stack(plate.x).size()), Cfg.COL_BONUS)
+	_popup_tween(Cfg.cell_to_pixel(Vector2i(plate.x, plate.y)))
+	if GameState.burgers_done >= GameState.burgers_target:
+		_enter(Phase.LEVEL_CLEAR)
 
 
-func _on_want_salt(cell: Vector2i, facing: int) -> void:
-	var packet := Salt.new()
-	_actor_parent().add_child(packet)
-	packet.setup(board, cell, facing, player)
-	packet.add_to_group(&"salt")
+func _on_enemy_squashed(points: int) -> void:
+	GameState.add_score(points)
 
 
-func _on_enemy_caught() -> void:
-	if player != null:
-		player.hit()
+# --- Bonuses ---------------------------------------------------------------
+
+
+func _process_bonuses(delta: float) -> void:
+	for b in get_tree().get_nodes_in_group(&"bonuses"):
+		var bonus := b as Bonus
+		if bonus == null or not is_instance_valid(bonus):
+			continue
+		if bonus.cell == player.cell:
+			_collect(bonus)
+	_bonus_t -= delta
+	if _bonus_t > 0.0:
+		return
+	_bonus_t = BONUS_EVERY
+	if get_tree().get_nodes_in_group(&"bonuses").size() >= BONUS_MAX:
+		return
+	var at := _random_walk_row_cell()
+	if at == Vector2i(-1, -1):
+		return
+	var bonus := Bonus.new()
+	_actor_parent().add_child(bonus)
+	bonus.setup(at, _random_bonus_kind())
+	bonus.add_to_group(&"bonuses")
+
+
+func _collect(bonus: Bonus) -> void:
+	match bonus.kind:
+		Bonus.Kind.PEPPER:
+			player.add_pepper(bonus.charges())
+			GameState.add_score(Food.POINTS_PEPPER)
+			_popup("PEPPER", Cfg.COL_PEPPER)
+		Bonus.Kind.STUN:
+			for e in get_tree().get_nodes_in_group(&"enemies"):
+				(e as Enemy).stun(bonus.stun_seconds())
+			GameState.add_score(Food.POINTS_STUN)
+			_popup("STUN!", Cfg.COL_PEPPER)
+		Bonus.Kind.LIFE:
+			GameState.add_chef()
+			_popup("1UP", Cfg.COL_BONUS)
+	_popup_tween(Cfg.cell_to_pixel(bonus.cell))
+	bonus.queue_free()
+
+
+## Pepper is the one that has to appear where the chef can actually reach it, so
+## the cell is drawn from the walk rows rather than the whole grid.
+func _random_walk_row_cell() -> Vector2i:
+	for i in 24:
+		var at := Vector2i(randi_range(1, Cfg.GRID_W - 2), randi_range(0, Cfg.GRID_H - 1))
+		if not board.in_bounds(at) or board.blocks_player(at):
+			continue
+		if not board.floor_below(at):
+			continue
+		return at
+	return Vector2i(-1, -1)
+
+
+func _random_bonus_kind() -> Bonus.Kind:
+	var roll := randf()
+	if roll < 0.6:
+		return Bonus.Kind.PEPPER
+	if roll < 0.9:
+		return Bonus.Kind.STUN
+	return Bonus.Kind.LIFE
+
+
+# --- Loss ------------------------------------------------------------------
+
+
+## Runs the contact check. Kept out of the enemy so that the pepper rule lives
+## in one place: a ghosted chef cannot be caught, and a stunned nasty cannot
+## catch him even without pepper.
+func _check_catches() -> void:
+	if phase != Phase.PLAYING or player == null or not is_instance_valid(player):
+		return
+	if player.state == Player.St.JUMP:
+		return
+	if player.ghost():
+		# Pepper is spent by touching the first nasty, and that nasty is stunned.
+		for e in get_tree().get_nodes_in_group(&"enemies"):
+			var enemy := e as Enemy
+			if enemy != null and is_instance_valid(enemy) and _touching(enemy.cell):
+				player.use_pepper()
+				enemy.stun()
+				_popup("ZAP!", Cfg.COL_PEPPER)
+				return
+		return
+	for e in get_tree().get_nodes_in_group(&"enemies"):
+		var enemy := e as Enemy
+		if enemy == null or not is_instance_valid(enemy):
+			continue
+		if enemy.state == Enemy.St.SQUASH or enemy.state == Enemy.St.STUN:
+			continue
+		if _touching(enemy.cell):
+			_on_player_died()
+			return
+
+
+func _touching(cell: Vector2i) -> bool:
+	return absi(cell.x - player.cell.x) + absi(cell.y - player.cell.y) <= 1
 
 
 func _on_player_died() -> void:
-	if GameState.lives <= 0:
+	GameState.lose_chef()
+	# Every nasty goes back to its own ledge, as in the original. Without this a
+	# nasty sitting next to the chef's spawn eats the run chef after chef, because
+	# each respawn puts the chef straight back into its arms.
+	for e in get_tree().get_nodes_in_group(&"enemies"):
+		var enemy := e as Enemy
+		if enemy != null and is_instance_valid(enemy):
+			enemy.reset_for_respawn()
+	if GameState.out_of_chefs():
 		_enter(Phase.GAME_OVER)
 	else:
 		_popup("OUCH!", Cfg.COL_PLATE)
-
-
-func _on_served(points: int, cell: Vector2i) -> void:
-	_popup("+%d" % points, Color("6fc24a"))
-	_popup_tween(Cfg.cell_to_pixel(cell))
-	if GameState.burgers_served >= GameState.burgers_target:
-		_enter(Phase.LEVEL_CLEAR)
+		_popup_tween(Cfg.cell_to_pixel(board.chef_spawn))
+		# The chef goes back to where he started: the plate work already done
+		# stays done.
+		player.place(board.chef_spawn)
 
 
 # --- Flow -------------------------------------------------------------------
@@ -158,14 +298,12 @@ func _process(delta: float) -> void:
 		return
 
 	match phase:
-		# Everything that is not PLAYING just runs its phase timer down, which
-		# includes the level card, so INTRO deliberately falls through here.
 		Phase.PLAYING:
-			GameState.tick(delta)
-			if GameState.time_left <= 0.0:
-				GameState.lose_life()
-				_enter(Phase.GAME_OVER if GameState.lives <= 0 else Phase.TIME_UP)
+			_process_bonuses(delta)
+			_check_catches()
 		_:
+			# Everything that is not PLAYING just runs its phase timer down, which
+			# includes the level card, so INTRO deliberately falls through here.
 			_phase_t -= delta
 			if _phase_t <= 0.0:
 				_advance()
@@ -184,24 +322,19 @@ func _enter(next: Phase) -> void:
 	phase = next
 	_phase_t = PHASE_TIME
 	match next:
-		Phase.INTRO:
-			pass
 		Phase.PLAYING:
 			_set_player_active(true)
 		Phase.LEVEL_CLEAR:
 			_set_player_active(false)
-			_popup("LEVEL CLEAR!", Color("6fc24a"))
+			_popup("LEVEL CLEAR!", Cfg.COL_BONUS)
 			GameState.save_progress()
-		Phase.TIME_UP:
-			_set_player_active(false)
-			_popup("TIME UP", Color("e2453c"))
 		Phase.GAME_OVER:
 			_set_player_active(false)
-			_popup("GAME OVER", Color("e2453c"))
+			_popup("GAME OVER", Cfg.COL_PLATE)
 			GameState.save_progress()
 		Phase.ALL_CLEAR:
 			_set_player_active(false)
-			_popup("YOU WIN!", Color("f5c53a"))
+			_popup("YOU WIN!", Cfg.COL_PEPPER)
 			GameState.save_progress()
 
 
@@ -215,14 +348,7 @@ func _advance() -> void:
 				start_level(next_index)
 			else:
 				_enter(Phase.ALL_CLEAR)
-				_phase_t = PHASE_TIME
-		Phase.TIME_UP:
-			# Out of time costs the level, not the run.
-			GameState.set_time(level.seconds)
-			start_level(GameState.level_index)
-		Phase.GAME_OVER:
-			get_tree().change_scene_to_file("res://scenes/main.tscn")
-		Phase.ALL_CLEAR:
+		Phase.GAME_OVER, Phase.ALL_CLEAR:
 			get_tree().change_scene_to_file("res://scenes/main.tscn")
 
 
@@ -234,3 +360,9 @@ func _popup_tween(at: Vector2) -> void:
 	if _popups.is_empty():
 		return
 	_popups.back()["pos"] = at
+
+
+## For the Hud to draw. Popups live here because only the Game knows where things
+## happened.
+func popups() -> Array:
+	return _popups

@@ -88,7 +88,6 @@ shot 02-level1-card scenes/game.tscn  0   400  1 30
 shot 03-level1-play scenes/game.tscn  1   900  8 10
 shot 04-level2-play scenes/game.tscn  1   900  8 10 --level=1
 shot 05-level3-play scenes/game.tscn  1   900  8 10 --level=2
-shot 06-level4-play scenes/game.tscn  1   900  8 10 --level=3
 
 if [ "$fail" -ne 0 ]; then
 	echo "shots: FAILED" >&2

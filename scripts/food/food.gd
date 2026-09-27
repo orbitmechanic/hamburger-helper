@@ -1,6 +1,6 @@
 class_name Food
 extends Resource
-## Definition of a single food item, its look, and the burger scoring rules.
+## The burger parts and how a finished burger is put together.
 ##
 ## Definitions live in code rather than as .tres assets so that the whole
 ## ingredient set is reviewable in a diff and needs no import step.
@@ -10,10 +10,7 @@ enum Kind {
 	BUN_TOP,
 	LETTUCE,
 	TOMATO,
-	CHEESE,
-	MEAT,
-	PICKLE,
-	ONION,
+	PATTY,
 }
 
 const DEFS := {
@@ -45,49 +42,56 @@ const DEFS := {
 		"is_bun": false,
 		"bun_role": "",
 	},
-	Kind.CHEESE: {
-		"name": "Cheese",
-		"color": Color("f5c53a"),
-		"accent": Color("d09c1c"),
-		"is_bun": false,
-		"bun_role": "",
-	},
-	Kind.MEAT: {
-		"name": "Meat",
+	Kind.PATTY: {
+		"name": "Patty",
 		"color": Color("7b4a2a"),
 		"accent": Color("5a3320"),
 		"is_bun": false,
 		"bun_role": "",
 	},
-	Kind.PICKLE: {
-		"name": "Pickle",
-		"color": Color("3f8f3a"),
-		"accent": Color("2c6628"),
-		"is_bun": false,
-		"bun_role": "",
-	},
-	Kind.ONION: {
-		"name": "Onion",
-		"color": Color("b57edc"),
-		"accent": Color("8a5aa8"),
-		"is_bun": false,
-		"bun_role": "",
-	},
 }
 
-## Score for a finished burger: 100 for the first ingredient, +50 each after.
-const BASE_POINTS := 100
-const EXTRA_POINTS := 50
+## The minimum a burger can be: something to sit on, a patty, and a lid.
+const MIN_STACK := 3
+
+## Scoring, in the spirit of the original's escalating rewards.
+##
+## Dropping a part a level is the bread and butter, so it pays a little. A
+## finished burger pays a lot more and more of it the bigger the burger is, which
+## is what makes building the tall stack a better plan than pushing whatever is
+## nearest. Squashing a nasty or riding one down is worth more again, because
+## both take nerve rather than a walk across a bun.
+const POINTS_PER_FLOOR := 50
+const POINTS_PER_SQUASH := {0: 100, 1: 200, 2: 300}
+## Indexed by the number of parts in the finished burger.
+const POINTS_BURGER := [0, 0, 0, 500, 1000, 2000, 3000, 5000, 8000]
+## Carrying a nasty down a part is the hardest thing in the game to do.
+const POINTS_RIDER := 1000
+const POINTS_PEPPER := 500
+const POINTS_STUN := 1000
+const POINTS_LIFE := 0
+
+
+static func burger_points(levels: int) -> int:
+	if levels < 0 or levels >= POINTS_BURGER.size():
+		return 0
+	return POINTS_BURGER[levels]
+
+
+static func squash_points(kind: int) -> int:
+	return POINTS_PER_SQUASH.get(kind, 100)
 
 
 static func def(kind: Kind) -> Dictionary:
 	return DEFS[kind]
 
 
-## Whether this is a real burger part. The tray uses -1 as a sentinel for a salt
-## packet, and that sentinel must never reach anything that looks a kind up in
-## DEFS: indexing the table with it throws, and it throws from _draw, so the
-## error surfaces as a crash while rendering rather than where it was caused.
+## Whether this is a real burger part.
+##
+## Every caller here is handed a kind that came from somewhere else - a map
+## character, a level recipe, a plate stack - so the guard is kept deliberately.
+## Indexing DEFS with a bad value throws, and because the throw came from _draw
+## it surfaced as the renderer crashing rather than as the caller that caused it.
 static func is_kind(kind: int) -> bool:
 	return DEFS.has(kind)
 
@@ -108,11 +112,31 @@ static func accent_of(kind: Kind) -> Color:
 	return DEFS[kind]["accent"]
 
 
-static func burger_points(kinds: Array) -> int:
-	var fillings := 0
-	for k in kinds:
-		if not is_bun(k):
-			fillings += 1
-	if fillings <= 0:
-		return 0
-	return BASE_POINTS + (fillings - 1) * EXTRA_POINTS
+## Whether a burger stacked bottom-to-top reads as finished.
+##
+## A burger is, in order: a bottom bun, a patty, any number of lettuce and
+## tomato slices, and a top bun on the very top. Every position is checked
+## rather than just "does it contain a patty", so a burger assembled inside out -
+## the patty landing before the base bun, say - is rejected instead of scored.
+static func stack_is_burger(stack: Array) -> bool:
+	if stack.size() < MIN_STACK:
+		return false
+	for kind: int in stack:
+		if not is_kind(kind):
+			return false
+	# The base has to actually be the base and the lid has to be on top.
+	if int(stack[0]) != Kind.BUN_BOTTOM:
+		return false
+	if int(stack[stack.size() - 1]) != Kind.BUN_TOP:
+		return false
+	# The patty sits directly on the base bun. A bun stacked straight on a bun
+	# is a lid on a plate, not a burger, and a patty buried under the toppings
+	# is not what the recipe calls for.
+	if int(stack[1]) != Kind.PATTY:
+		return false
+	# Everything between the patty and the lid is optional, and only toppings:
+	# no second bun and no second patty can hide in the middle of a burger.
+	for i in range(2, stack.size() - 1):
+		if int(stack[i]) not in [Kind.LETTUCE, Kind.TOMATO]:
+			return false
+	return true

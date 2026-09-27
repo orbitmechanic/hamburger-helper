@@ -1,102 +1,72 @@
 class_name Board
 extends Node2D
-## The level grid: what is solid, what is a ladder, where items rest, and all
+## The level grid: what is solid, what is a ladder, where a plate is, and all
 ## static tile drawing.
 ##
 ## Everything in the game resolves collisions against this grid rather than
 ## against physics bodies. That makes movement exact, deterministic, and cheap
 ## to reason about in tests.
+##
+## The interesting part is landing_spot(): where a falling ingredient comes to
+## rest. That one function is the whole "walk across it and it drops a level"
+## rule, including knocking down whatever is underneath.
 
-enum Tile { EMPTY, PLATFORM, WALL, LADDER, TABLE, DISPENSER }
+enum Tile { EMPTY, PLATFORM, WALL, LADDER, PLATE }
 
 const T := Cfg.TILE
 
 ## Tile type per cell, indexed y * Cfg.GRID_W + x.
 var _tiles := PackedByteArray()
-## Resting ingredients and enemies keyed by cell.
-var _occupancy := {}
-## Burger stacks being assembled, keyed by the table's cell.
-var _table_stacks := {}
-## Dispensers keyed by cell, mapping to the food kinds they emit in order.
-var _dispensers := {}
-## How many times each dispenser has been bumped, so it can cycle its output.
-var _dispenser_index := {}
-## Burger stacks that are complete but not yet credited, keyed by table cell.
-var _completed := {}
+## Ingredients by cell. An ingredient is wide, so it holds one entry per cell
+## and clearing it means clearing the whole run.
+var _ingredients := {}
+## The burger being built on each plate, bottom-to-top, keyed by the plate's
+## leftmost cell.
+var _stacks := {}
+## Plates in the order they appear in the level.
+var plates: Array[LevelData.Span] = []
 
 var level: LevelData.Level
-var salt_cells: Array[Vector2i] = []
-## Enemy spawn cells mapped to their kind.
+var chef_spawn := Vector2i(1, 1)
+var enemy_spawns: Array[Vector2i] = []
 var enemy_kinds := {}
-var player_spawn := Vector2i(1, 12)
 
 
 func setup(lv: LevelData.Level) -> void:
 	level = lv
-	_tiles = PackedByteArray()
 	_tiles.resize(Cfg.GRID_W * Cfg.GRID_H)
-	_occupancy.clear()
-	_table_stacks.clear()
-	_dispensers.clear()
-	_dispenser_index.clear()
-	_completed.clear()
-	salt_cells.clear()
-	enemy_kinds.clear()
+	_tiles.fill(Tile.EMPTY)
+	_ingredients.clear()
+	_stacks.clear()
+	plates = lv.plates
+	chef_spawn = lv.chef
+	enemy_spawns = lv.enemies.duplicate()
+	enemy_kinds = lv.enemy_kinds.duplicate()
 
 	for y in lv.map.size():
 		var row: String = lv.map[y]
 		for x in mini(row.length(), Cfg.GRID_W):
 			_place(x, y, row[x])
 
+	# Every plate starts with a bottom bun on it. A burger is assembled from the
+	# bottom up, so this is the one part that is never in the maze: there would
+	# be no way to get a second one under the rest.
+	for plate in plates:
+		_stacks[plate.x] = [Food.Kind.BUN_BOTTOM]
+
 	queue_redraw()
 
 
 func _place(x: int, y: int, ch: String) -> void:
-	var cell := Vector2i(x, y)
 	match ch:
 		"#":
-			_set_tile(cell, Tile.PLATFORM)
+			_set_tile(Vector2i(x, y), Tile.PLATFORM)
 		"H":
-			_set_tile(cell, Tile.WALL)
+			_set_tile(Vector2i(x, y), Tile.WALL)
 		"=":
-			_set_tile(cell, Tile.LADDER)
-		"T":
-			_set_tile(cell, Tile.TABLE)
-		"P":
-			player_spawn = cell
-		"s":
-			salt_cells.append(cell)
-		"b", "l", "t", "c", "m":
-			_set_tile(cell, Tile.DISPENSER)
-			_dispensers[cell] = _dispenser_kinds(ch)
-		"e":
-			enemy_kinds[cell] = Enemy.Kind.HOTDOG
-		"p":
-			enemy_kinds[cell] = Enemy.Kind.PICKLE
-		"o":
-			enemy_kinds[cell] = Enemy.Kind.ONION
-
-
-## True when a salt pile is at this cell.
-func is_salt(cell: Vector2i) -> bool:
-	return salt_cells.has(cell)
-
-
-## Dispensers cycle through these kinds, one per bump. The bun dispenser
-## alternates bottom and top so both halves come from the same machine.
-func _dispenser_kinds(ch: String) -> Array:
-	match ch:
-		"b":
-			return [Food.Kind.BUN_BOTTOM, Food.Kind.BUN_TOP]
-		"l":
-			return [Food.Kind.LETTUCE]
-		"t":
-			return [Food.Kind.TOMATO]
-		"c":
-			return [Food.Kind.CHEESE]
-		"m":
-			return [Food.Kind.MEAT]
-	return []
+			_set_tile(Vector2i(x, y), Tile.LADDER)
+		LevelData.PLATE_CHAR:
+			_set_tile(Vector2i(x, y), Tile.PLATE)
 
 
 func _set_tile(cell: Vector2i, t: Tile) -> void:
@@ -113,145 +83,163 @@ func tile_at(cell: Vector2i) -> Tile:
 	return _tiles[cell.y * Cfg.GRID_W + cell.x] as Tile
 
 
-## True when a cell stops the player from walking into it. Tables are counters:
-## the chef steps up onto them, so they do not block.
+## True when a cell stops the chef walking into it.
+##
+## Ingredients are deliberately not here: he walks over food, and crossing it
+## fully is what knocks it down. Ladders and plates are walkable too - a plate
+## is on the ground and a ladder is the way up.
 func blocks_player(cell: Vector2i) -> bool:
-	return tile_at(cell) in [Tile.PLATFORM, Tile.WALL, Tile.DISPENSER]
+	return tile_at(cell) in [Tile.PLATFORM, Tile.WALL]
 
 
-## True when a cell stops a falling ingredient. Tables count here - that is what
-## makes them work as assembly surfaces.
-func blocks_item(cell: Vector2i) -> bool:
-	return tile_at(cell) in [Tile.PLATFORM, Tile.WALL, Tile.DISPENSER, Tile.TABLE]
-
-
-## Ladder cells hold the player up: stepping onto one must not drop you.
+## True when a cell holds something up, so standing on it does not mean falling.
 func supports_actor(cell: Vector2i) -> bool:
-	return blocks_item(cell) or tile_at(cell) == Tile.LADDER
+	return tile_at(cell) in [Tile.PLATFORM, Tile.WALL, Tile.LADDER, Tile.PLATE]
+
+
+## Whether there is something to stand on directly below a cell. Ingredients
+## count: the chef walks on top of food exactly as he walks on a ledge, and when
+## the food drops out from under him he falls.
+func floor_below(cell: Vector2i) -> bool:
+	var below := cell + Vector2i.DOWN
+	if not in_bounds(below):
+		return false
+	return supports_actor(below) or _ingredients.has(below)
 
 
 func is_ladder(cell: Vector2i) -> bool:
 	return tile_at(cell) == Tile.LADDER
 
 
-func is_dispenser(cell: Vector2i) -> bool:
-	return _dispensers.has(cell)
+func is_plate(cell: Vector2i) -> bool:
+	return tile_at(cell) == Tile.PLATE
 
 
-## Returns the kinds a dispenser cycles through, or an empty array.
-func dispenser_kinds(cell: Vector2i) -> Array:
-	return _dispensers.get(cell, [])
+# --- Ingredients -----------------------------------------------------------
 
 
-## Every dispenser on the board, for callers that need to reason about the
-## level as a whole rather than one cell at a time.
-func dispenser_cells() -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	for cell: Vector2i in _dispensers:
-		out.append(cell)
-	return out
+func ingredient_at(cell: Vector2i) -> Ingredient:
+	return _ingredients.get(cell, null)
 
 
-## Every counter top, for the same reason. Read from the tiles rather than
-## _table_stacks, which only gains an entry once something is placed on a
-## counter and so does not know where the counters are on a fresh level.
-func table_cells() -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	for y in Cfg.GRID_H:
-		for x in Cfg.GRID_W:
-			var cell := Vector2i(x, y)
-			if tile_at(cell) == Tile.TABLE:
-				out.append(cell)
-	return out
-
-
-## Advances a dispenser's cycle and returns the kind it now emits, or -1.
-func bump_dispenser(cell: Vector2i) -> int:
-	var kinds: Array = _dispensers.get(cell, [])
-	if kinds.is_empty():
-		return -1
-	var idx: int = _dispenser_index.get(cell, 0)
-	_dispenser_index[cell] = (idx + 1) % kinds.size()
-	return kinds[idx]
-
-
-# --- Occupancy -------------------------------------------------------------
-
-
-func occupant_at(cell: Vector2i) -> Node2D:
-	return _occupancy.get(cell, null)
-
-
-func set_occupant(cell: Vector2i, node: Node2D) -> void:
-	if not in_bounds(cell):
-		return
-	_occupancy[cell] = node
-
-
-func clear_occupant(cell: Vector2i) -> void:
-	_occupancy.erase(cell)
-
-
-# --- Table stacks ----------------------------------------------------------
-
-
-func table_stack(cell: Vector2i) -> Array:
-	return _table_stacks.get(cell, [])
-
-
-func push_to_table(cell: Vector2i, kind: Food.Kind) -> Array:
-	var stack: Array = _table_stacks.get(cell, [])
-	stack.append(kind)
-	_table_stacks[cell] = stack
-	queue_redraw()
-	return stack
-
-
-## Removes and returns the top item of a table stack, or -1 when empty.
-func pop_from_table(cell: Vector2i) -> int:
-	var stack: Array = _table_stacks.get(cell, [])
-	if stack.is_empty():
-		return -1
-	var top: int = stack.pop_back()
-	_completed.erase(cell)
-	_table_stacks.erase(cell)
-	if not stack.is_empty():
-		_table_stacks[cell] = stack
-	queue_redraw()
-	return top
-
-
-func clear_table(cell: Vector2i) -> void:
-	_table_stacks.erase(cell)
-	_completed.erase(cell)
-	queue_redraw()
-
-
-## True when the stack reads as a finished burger: a bottom bun, at least one
-## filling, and a top bun on the very top.
-func stack_is_burger(stack: Array) -> bool:
-	if stack.size() < 3:
-		return false
-	if not Food.is_bun(stack[0]):
-		return false
-	if not Food.is_bun(stack[stack.size() - 1]):
-		return false
-	if Food.is_bun(stack[0]) and String(Food.def(stack[0])["bun_role"]) != "bottom":
-		return false
-	if String(Food.def(stack[stack.size() - 1])["bun_role"]) != "top":
-		return false
-	for i in range(1, stack.size() - 1):
-		if Food.is_bun(stack[i]):
+## Claims every cell of a span for an ingredient. Returns false if any cell is
+## already taken, and claims nothing in that case, so a wide ingredient can never
+## end up half-placed on top of another.
+func claim(cells: Array[Vector2i], ing: Ingredient) -> bool:
+	for cell in cells:
+		if not in_bounds(cell) or _ingredients.has(cell):
 			return false
+		# A part is never allowed to sit inside geometry. This is the backstop
+		# behind landing_spot: if a scan ever says a part belongs somewhere it
+		# cannot go, the claim is refused and the part stays where it was rather
+		# than sinking into a ledge.
+		if tile_at(cell) in [Tile.PLATFORM, Tile.WALL]:
+			return false
+	for cell in cells:
+		_ingredients[cell] = ing
 	return true
 
 
-func mark_completed(cell: Vector2i) -> void:
-	_completed[cell] = true
+func release(cells: Array[Vector2i]) -> void:
+	for cell in cells:
+		_ingredients.erase(cell)
 
 
-func is_completed(cell: Vector2i) -> bool:
-	return _completed.has(cell)
+# --- Plates ----------------------------------------------------------------
+
+
+## The stack growing on a plate, bottom-to-top. Keyed by the plate's leftmost
+## cell, which is where the level put it.
+func stack(plate_x: int) -> Array:
+	return _stacks.get(plate_x, [])
+
+
+## The row the next part dropped on this plate would come to rest at.
+func stack_top_row(plate: LevelData.Span) -> int:
+	return plate.y - stack(plate.x).size()
+
+
+## Adds a part to a plate's burger. Returns the finished stack, so the caller can
+## check whether the burger is done.
+func push_to_stack(plate: LevelData.Span, kind: Food.Kind) -> Array:
+	var pile: Array = _stacks.get(plate.x, [Food.Kind.BUN_BOTTOM])
+	pile.append(kind)
+	_stacks[plate.x] = pile
+	queue_redraw()
+	return pile
+
+
+func burgers_done() -> int:
+	var done := 0
+	for plate in plates:
+		if Food.stack_is_burger(stack(plate.x)):
+			done += 1
+	return done
+
+
+# --- Falling ---------------------------------------------------------------
+
+
+## Where an ingredient spanning `cells` would come to rest if it were knocked
+## right now, given that it is currently held up by whatever is on row
+## `support_row`.
+##
+## Scans straight down and stops at the first thing in the way: a ledge, another
+## ingredient, or the top of a plate's burger.
+##
+## A part dropped off a storey lands on the storey below, which is why pushing a
+## part moves it one level rather than dropping it the whole height of the level
+## in a single push. The exception is the storey the part is already standing on:
+## `support_row` is that ledge, so the scan starts below it and the part falls
+## off the front onto whatever is next.
+##
+## Stops on another ingredient are the chain: the caller knocks that one too, so
+## pushing the top bun of a column walks the whole column down a storey at a
+## time, and doing that repeatedly walks it onto the plate.
+##
+## Returns {"row": int, "ingredient": Ingredient or null, "plate": Span or null}.
+## "row" is where the falling ingredient ends up, which is one above the thing it
+## landed on.
+func landing_spot(cells: Array[Vector2i], support_row: int) -> Dictionary:
+	for y in range(support_row + 1, Cfg.GRID_H):
+		var hit_ing: Ingredient = null
+		for cell in cells:
+			if cell.x < 0 or cell.x >= Cfg.GRID_W:
+				continue
+			var at := Vector2i(cell.x, y)
+			match tile_at(at):
+				Tile.PLATFORM, Tile.WALL:
+					return {"row": y - 1, "ingredient": null, "plate": null}
+				Tile.PLATE:
+					var plate := plate_span_at(at)
+					if plate != null and _plate_blocks(plate, y):
+						return {"row": y - 1, "ingredient": null, "plate": plate}
+			var ing := ingredient_at(at)
+			if ing != null and hit_ing == null:
+				hit_ing = ing
+		if hit_ing != null:
+			return {"row": y - 1, "ingredient": hit_ing, "plate": null}
+	# Nothing below. Unreachable with a solid floor under every column, but a
+	# part that somehow got here has to be told to stay put rather than be handed
+	# a row underneath the world.
+	return {"row": cells[0].y, "ingredient": null, "plate": null}
+
+
+
+## A plate's burger occupies the cells above it, growing upward, so a falling
+## part is stopped by the stack rather than passing through to the plate.
+func _plate_blocks(plate: LevelData.Span, y: int) -> bool:
+	var size := stack(plate.x).size()
+	var top := plate.y - size + 1
+	return y >= top and y <= plate.y
+
+
+## The plate whose column covers this cell, or null.
+func plate_span_at(cell: Vector2i) -> LevelData.Span:
+	for plate in plates:
+		if cell.y == plate.y and cell.x >= plate.x and cell.x <= plate.right():
+			return plate
+	return null
 
 
 # --- Drawing ---------------------------------------------------------------
@@ -262,9 +250,9 @@ func _draw() -> void:
 		return
 	for y in Cfg.GRID_H:
 		for x in Cfg.GRID_W:
-			var cell := Vector2i(x, y)
-			_draw_tile(cell)
-	_draw_salt()
+			_draw_tile(Vector2i(x, y))
+	for plate in plates:
+		_draw_burger(plate)
 
 
 func _draw_tile(cell: Vector2i) -> void:
@@ -283,26 +271,22 @@ func _draw_tile(cell: Vector2i) -> void:
 			for rung in 2:
 				var ry := 2 + rung * 6
 				draw_rect(Rect2(rect.position + Vector2(3, ry), Vector2(T - 6, 2)), Cfg.COL_LADDER.darkened(0.15))
-		Tile.DISPENSER:
-			_draw_dispenser(rect)
-		Tile.TABLE:
-			draw_rect(Rect2(rect.position + Vector2(0, 6), Vector2(T, T - 6)), Cfg.COL_TABLE)
-			draw_rect(Rect2(rect.position + Vector2(0, 6), Vector2(T, 2)), Cfg.COL_TABLE.darkened(0.3))
-			draw_rect(Rect2(rect.position + Vector2(2, T - 4), Vector2(T - 4, 4)), Cfg.COL_PLATE)
-		Tile.EMPTY:
+		_:
 			pass
 
 
-func _draw_dispenser(rect: Rect2) -> void:
-	draw_rect(Rect2(rect.position, Vector2(rect.size.x, rect.size.y - 3)), Cfg.COL_WALL.lightened(0.1))
-	draw_rect(Rect2(rect.position + Vector2(0, 0), Vector2(rect.size.x, 3)), Cfg.COL_PLATFORM)
-	draw_rect(Rect2(rect.position + Vector2(2, rect.size.y - 6), Vector2(rect.size.x - 4, 4)), Cfg.COL_OUTLINE)
-	draw_rect(Rect2(rect.position + Vector2(2, 3), Vector2(3, 3)), Cfg.COL_PLATFORM_EDGE)
+func _draw_burger(plate: LevelData.Span) -> void:
+	# The plate itself sits on the ground, and the burger grows upward from it.
+	var plate_rect := Rect2(Vector2(plate.x, plate.y) * T, Vector2(plate.width * T, 6))
+	draw_rect(plate_rect, Cfg.COL_PLATE)
+	draw_rect(Rect2(plate_rect.position, Vector2(plate_rect.size.x, 2)), Cfg.COL_PLATE.darkened(0.25))
 
-
-func _draw_salt() -> void:
-	for cell in salt_cells:
-		var base := Vector2(cell) * T + Vector2(T, T) * 0.5
-		draw_rect(Rect2(base + Vector2(-6, -3), Vector2(12, 8)), Cfg.COL_SALT)
-		draw_rect(Rect2(base + Vector2(-6, -3), Vector2(12, 2)), Cfg.COL_SALT.darkened(0.15))
-		draw_rect(Rect2(base + Vector2(-3, 3), Vector2(6, 2)), Cfg.COL_OUTLINE)
+	var pile := stack(plate.x)
+	# Bottom-to-top, so the first entry draws lowest and the lid ends up on top.
+	for i in pile.size():
+		var kind: int = pile[i]
+		var y := plate.y - 1 - i
+		var r := Rect2(Vector2(plate.x, y) * T, Vector2(plate.width * T, T))
+		draw_rect(r, Food.color_of(kind))
+		draw_rect(Rect2(r.position, Vector2(r.size.x, 4)), Food.accent_of(kind))
+		draw_rect(r, Cfg.COL_OUTLINE, false, 1.0)

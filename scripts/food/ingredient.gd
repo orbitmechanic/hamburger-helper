@@ -1,78 +1,163 @@
 class_name Ingredient
 extends Node2D
-## A loose ingredient falling to rest on a counter or another ingredient.
+## One wide slice of burger sitting in the maze, waiting to be knocked down.
 ##
-## Like the player, ingredients move one cell at a time and only ever rest on
-## exact cell boundaries, so a dropped stack is always tidy.
+## The core rule of the game lives in knock(): walking the chef all the way
+## across a part drops it one level, and if there is another part underneath,
+## that one is knocked too, so pushing the top bun of a column walks the whole
+## column down a floor at a time. The chef never carries anything.
 
-signal rested
+## Emitted with how many levels the part dropped, for scoring.
+signal dropped(floors: int, at: Vector2i)
+## Emitted when the part has landed on a plate and joined a burger.
+signal boarded(plate: LevelData.Span)
+## Emitted when a part was knocked while an enemy was standing on it.
+signal carried_rider
 
 var board: Board
-var kind: Food.Kind = Food.Kind.LETTUCE
-var cell := Vector2i.ZERO
-var resting := false
+var kind: Food.Kind = Food.Kind.PATTY
+## The run of cells this part occupies. Wider parts are drawn wide, and the chef
+## has to cross all of them to knock it down.
+var cells: Array[Vector2i] = []
+var rest_row := 0
+## Row of whatever is holding this part up: a platform, another part, or the
+## top of a plate's burger. Falling starts below this.
+var support_row := 0
+var falling := false
 
 var _t := 0.0
 var _dur := 0.075
 var _from := Vector2.ZERO
 var _to := Vector2.ZERO
-var _to_cell := Vector2i.ZERO
 
 
-func setup(p_board: Board, start_cell: Vector2i, food_kind: Food.Kind) -> void:
+func setup(p_board: Board, span: LevelData.Span) -> void:
 	board = p_board
-	kind = food_kind
-	cell = start_cell
-	position = Cfg.cell_to_pixel(start_cell)
-	_begin_fall()
+	kind = LevelData.INGREDIENT_KINDS[span.ch]
+	cells = span.cells()
+	rest_row = span.y
+	support_row = span.y + 1
+	if not board.claim(cells, self):
+		push_error("ingredient at row %d cols %d-%d overlaps something"
+			% [span.y, span.x, span.right()])
+	position = _pixels_for_row(rest_row)
+	z_index = 4
 
 
-func _begin_fall() -> void:
-	if _can_fall():
-		_from = position
-		_to_cell = cell + Vector2i.DOWN
-		_to = Cfg.cell_to_pixel(_to_cell)
-		_t = _dur
-		return
-	_settle()
+## Knocks this part down. `extra_floors` is what an enemy riding it buys: in the
+## original a part with a nasty on top drops two levels instead of one, which is
+## worth 500 to 8000 points.
+##
+## Returns where the part came to rest, as {"row", "support"} or {"plate"} on the
+## plate it joined. The caller needs that because knocking a column from the top
+## means the part underneath may end up on a plate and out of the maze, in which
+## case there is no longer anything to land on.
+func knock(extra_floors: int = 0) -> Dictionary:
+	if falling or not is_inside_tree():
+		return {"row": rest_row, "support": support_row}
+	if extra_floors > 0:
+		carried_rider.emit()
+	var where := _drop()
+	for i in extra_floors:
+		if where.has("plate"):
+			break
+		where = _drop()
+	return where
 
 
-func _can_fall() -> bool:
-	var below := cell + Vector2i.DOWN
-	if not board.in_bounds(below):
-		return false
-	if board.blocks_item(below):
-		return false
-	return board.occupant_at(below) == null
+## Moves down one level, chaining into whatever is underneath.
+func _drop() -> Dictionary:
+	var spot := board.landing_spot(cells, support_row)
+	var below: Ingredient = spot.ingredient
+
+	if below != null:
+		# The chain. Knock the part underneath first so that whatever it lands on
+		# is already in place, then come to rest on top of where it ended up.
+		var landed := below.knock()
+		if landed.has("plate"):
+			# It has joined a burger and left the maze, so the way down is open
+			# all the way to the plate. Landing there finishes the burger.
+			return _board(landed["plate"])
+		var r: int = landed["row"]
+		return _relocate(r - 1, r)
+
+	if spot.plate != null:
+		return _board(spot.plate)
+
+	var row: int = spot.row
+	# Only ever downwards, and only to a row that is actually below. A part that
+	# has reached the floor is asked to fall again and is told no.
+	if row <= rest_row:
+		return {"row": rest_row, "support": support_row}
+	return _relocate(row, row + 1)
 
 
-func _settle() -> void:
-	resting = true
-	position = Cfg.cell_to_pixel(cell)
-	board.set_occupant(cell, self)
-	rested.emit()
-	queue_redraw()
+## Moves the part to a new row, claiming the cells there. If the destination is
+## somehow occupied the part stays put rather than overlapping.
+func _relocate(row: int, support: int) -> Dictionary:
+	var where := {"row": rest_row, "support": support_row}
+	# Vector2i is a value type, so `for cell in moved` hands out copies and
+	# writing to them is lost. Walk by index so the array really moves.
+	var moved := cells.duplicate()
+	for i in moved.size():
+		var cell := moved[i] as Vector2i
+		cell.y = row
+		moved[i] = cell
+	board.release(cells)
+	if not board.claim(moved, self):
+		board.claim(cells, self)
+		return where
+	cells = moved
+	_from = position
+	_to = _pixels_for_row(row)
+	rest_row = row
+	support_row = support
+	falling = true
+	_t = _dur
+	dropped.emit(1, cells[0])
+	return {"row": row, "support": support}
+
+
+## Joins a plate's burger and leaves the maze for good.
+func _board(plate: LevelData.Span) -> Dictionary:
+	board.push_to_stack(plate, kind)
+	board.release(cells)
+	falling = true
+	boarded.emit(plate)
+	# Nothing about this part is a target any more.
+	queue_free()
+	return {"plate": plate}
 
 
 func _process(delta: float) -> void:
-	if resting:
+	if not falling:
 		return
 	_t -= delta
 	var a := clampf(1.0 - _t / _dur, 0.0, 1.0)
 	position = _from.lerp(_to, a)
 	if _t > 0.0:
 		return
-	cell = _to_cell
-	position = Cfg.cell_to_pixel(cell)
-	if _can_fall():
-		_begin_fall()
-	else:
-		_settle()
+	position = _to
+	falling = false
+	queue_redraw()
+
+
+func _pixels_for_row(row: int) -> Vector2:
+	var x := 0
+	for cell in cells:
+		x += cell.x
+	x = x / cells.size() if not cells.is_empty() else 0
+	var half := cells.size() * Cfg.TILE * 0.5
+	return Vector2(x * Cfg.TILE + half, (row + 0.5) * Cfg.TILE)
 
 
 func _draw() -> void:
-	var r := Rect2(-6, -6, 12, 12)
-	draw_rect(r.grow(1.0), Cfg.COL_OUTLINE)
-	draw_rect(r, Food.color_of(kind))
-	draw_rect(Rect2(r.position, Vector2(r.size.x, 3)), Food.accent_of(kind))
-	draw_rect(Rect2(r.position + Vector2(2, 4), Vector2(8, 2)), Food.accent_of(kind).darkened(0.2))
+	var w := float(cells.size() * Cfg.TILE)
+	var r := Rect2(-w * 0.5 + 1.0, -Cfg.TILE * 0.5 + 1.0, w - 2.0, Cfg.TILE - 2.0)
+	draw_rect(r, Cfg.COL_OUTLINE)
+	draw_rect(r.grow(-1.0), Food.color_of(kind))
+	# A highlight along the top and a darker seam below, so a wide part still
+	# reads as one slice rather than a row of tiles.
+	draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2.0, 4)), Food.accent_of(kind))
+	draw_rect(Rect2(r.position + Vector2(2, r.size.y - 5.0), Vector2(r.size.x - 4.0, 2)),
+		Food.accent_of(kind).darkened(0.25))

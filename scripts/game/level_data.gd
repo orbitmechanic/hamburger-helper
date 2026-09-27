@@ -7,116 +7,175 @@ extends RefCounted
 ##
 ## Legend:
 ##   .  empty            #  platform (solid)     =  ladder
-##   H  wall (solid)     T  table / plate        s  salt pile
-##   b  bun dispenser    l  lettuce dispenser    t  tomato dispenser
-##   c  cheese dispenser m  meat dispenser
-##   P  player start     e  hot dog              p  pickle
-##   o  onion
+##   H  wall (solid)     O  plate (holds one burger)
+##   b  bottom bun       t  top bun
+##   m  patty            l  lettuce             r  tomato
+##   @  chef start       1  hot dog  2  fried egg  3  pickle
+##
+## A horizontal run of one character is one object, and its width is the length
+## of the run: "mm" is a single patty two cells wide, not two one-cell patties.
+## This is what lets a level author make a wide bun and a narrow slice of tomato
+## while keeping the map one character per cell.
 ##
 ## Geometry rules (enforced by validate()):
-##   * A platform row may contain ladder cells; ladders replace the platform at
-##     their column so the player can climb through the notch.
-##   * A ladder run spans from a lower floor's walkable row to the one above it.
-##   * Ladder cells support the player, so stepping onto one never makes you fall.
+##   * A ladder cell replaces the platform at its column, so the chef can stand
+##     at the walk row above it and climb through.
+##   * An ingredient rests on the walk row above a platform, in the same cell the
+##     chef walks in - he walks over food, which is what knocking it down means.
+##   * Ledges are solid to the chef and transparent to falling food, so a part
+##     pushed off any storey falls the whole height of the level to the plate.
+##     A burger's parts are therefore stacked in one column above its plate, and
+##     the way to move them is from the top down: the cascade carries the lot.
+##   * A plate sits on the ground floor. The burger on it grows upward from the
+##     plate, so the column above a plate must stay clear for as many layers as
+##     that burger needs.
+##   * Every ingredient must sit in some plate's column, or it can never reach a
+##     plate and the level cannot be finished.
 
-const LEGAL_CHARS := ".#H=TsbltcmPepo"
-const DISPENSER_CHARS := "bltcm"
-const BLOCKING_CHARS := "#Hbltcmepo"
+const LEGAL_CHARS := ".#H=Obtmlr@123"
+const INGREDIENT_CHARS := "btmlr"
+const PLATE_CHAR := "O"
+const LADDER_CHAR := "="
+const CHEF_CHAR := "@"
+const ENEMY_CHARS := "123"
+const SOLID_CHARS := "#H"
+
+## Map char to Food.Kind, for the ingredient runs.
+const INGREDIENT_KINDS := {
+	"b": Food.Kind.BUN_BOTTOM,
+	"t": Food.Kind.BUN_TOP,
+	"m": Food.Kind.PATTY,
+	"l": Food.Kind.LETTUCE,
+	"r": Food.Kind.TOMATO,
+}
+
+## Map char to Enemy.Kind, for spawns.
+const ENEMY_KIND := {
+	"1": Enemy.Kind.HOTDOG,
+	"2": Enemy.Kind.EGG,
+	"3": Enemy.Kind.PICKLE,
+}
+
+
+## One horizontal run of one character: an ingredient, a plate, or a ladder.
+class Span extends RefCounted:
+	var ch: String = "."
+	var x: int = 0
+	var width: int = 1
+	var y: int = 0
+
+	func right() -> int:
+		return x + width - 1
+
+	func cells() -> Array[Vector2i]:
+		var out: Array[Vector2i] = []
+		for i in width:
+			out.append(Vector2i(x + i, y))
+		return out
+
+	func overlaps(other: Span) -> bool:
+		return x <= other.right() and other.x <= right()
 
 
 class Level:
 	var name: String = ""
-	var target: int = 3
-	var seconds: float = 75.0
 	var map: PackedStringArray = []
+	## Every plate, in reading order. The burger each one is building is derived
+	## from the ingredients standing in its column, so a level never has to state
+	## the recipe twice and the two can never disagree.
+	var plates: Array[Span] = []
+	## Every ingredient already placed in the maze.
+	var ingredients: Array[Span] = []
+	var chef: Vector2i = Vector2i(1, 1)
+	var enemies: Array[Vector2i] = []
+	var enemy_kinds: Dictionary = {}
+
+	## The recipe for a plate: bottom bun first, then whatever stands in its
+	## column ordered from the ground up. Because ingredients can only fall, a
+	## plate collects them in that same order, so the map doubles as the recipe.
+	func recipe(plate: Span) -> Array:
+		var column: Array[Span] = []
+		for ing in ingredients:
+			if ing.overlaps(plate):
+				column.append(ing)
+		column.sort_custom(func(a: Span, b: Span) -> bool: return a.y > b.y)
+		var out: Array = [Food.Kind.BUN_BOTTOM]
+		for ing in column:
+			out.append(INGREDIENT_KINDS[ing.ch])
+		return out
+
+	## How many ingredients are still up in the maze, and therefore how many
+	## pushes are left in the level however they are distributed.
+	func ingredients_left() -> int:
+		return ingredients.size()
 
 
+## The three levels.
+##
+## Generated once by tools/make_levels.gd and pasted here, because a level should
+## be readable in a diff and editable by hand rather than built at runtime. The
+## shape of each is a stack of ledges on rows 1/4/7/10/14 with the walk rows above
+## them, plates along the ground, and a burger's parts stacked in one plate's
+## column - the plate collects them in the order they fall, which is the order
+## the recipe needs.
 const LEVELS: Array = [
 	{
 		"name": "LUNCH RUSH",
-		"target": 3,
-		"seconds": 75.0,
 		"map": [
-			"################",
-			"#b............l#",
-			"#######=########",
-			"#......=.......#",
-			"#......=.......#",
-			"#=..TT.=..TT...#",
-			"#=#####=########",
-			"#=.............#",
-			"#=.............#",
-			"#=.............#",
-			"#=.............#",
-			"#=.............#",
-			"#=..TT..P.s....#",
-			"################",
+			"...........ttt..",
+			"####=####=######",
+			"....=....=......",
+			"......ttt..lll..",
+			"#####=########=#",
+			".....=........=.",
+			".ttt..lll..rrr..",
+			"####=#####=#####",
+			"....=.....=.....",
+			".mmm..mmm..mmm..",
+			"=#############=#",
+			"=.............=.",
+			"=.............=.",
+			"@OOO.1OOO2.OOO3.",
 			"################",
 		],
 	},
 	{
 		"name": "DOUBLE SHIFT",
-		"target": 5,
-		"seconds": 95.0,
 		"map": [
-			"################",
-			"#m....=.......b#",
-			"######=#########",
-			"#.....=........#",
-			"#.=...=....TT=.#",
-			"##=##########=##",
-			"#.=..........=.#",
-			"#.=......=.e.=.#",
-			"#########=######",
-			"#........=.....#",
-			"#.=.TT...=..p=.#",
-			"##=##########=##",
-			"#.=.TT...s.P.=.#",
-			"################",
+			"............ttt.",
+			"####=#########=#",
+			"....=.........=.",
+			"...ttt.ttt..lll.",
+			"##=#######=#####",
+			"..=.......=.....",
+			"tt.lll.lll..rrr.",
+			"#####=#####=####",
+			".....=.....=....",
+			"mm.mmm.mmm..mmm.",
+			"######=########=",
+			"......=........=",
+			"......=........=",
+			"OO3OOO1OO.@.OOO2",
 			"################",
 		],
 	},
 	{
 		"name": "DINNER RUSH",
-		"target": 6,
-		"seconds": 110.0,
 		"map": [
-			"################",
-			"#b.T.....=....c#",
-			"#########=######",
-			"#........=.....#",
-			"#..=.....=..=..#",
-			"###=########=###",
-			"#..=........=..#",
-			"#..=.p.=....=..#",
-			"#######=########",
-			"#......=.......#",
-			"#.=.TT.=.e...=.#",
-			"##=##########=##",
-			"#.=..TT.P.s..=.#",
-			"################",
-			"################",
-		],
-	},
-	{
-		"name": "LATE SHIFT",
-		"target": 7,
-		"seconds": 125.0,
-		"map": [
-			"################",
-			"#b...T........=#",
-			"##############=#",
-			"#.............=#",
-			"#.=...=..m....=#",
-			"##=###=#########",
-			"#.=...=........#",
-			"#.=...=..=.=TT.#",
-			"#########=#=####",
-			"#........=.=.p.#",
-			"#...=.TT.=.=e.=#",
-			"####=#########=#",
-			"#...=.TT.P.s..=#",
-			"################",
+			"...........ttt..",
+			"=########=######",
+			"=........=......",
+			"......ttt..lll..",
+			"#=########=#####",
+			".=........=.....",
+			"..ttt.lll..rrr..",
+			"#####=########=#",
+			".....=........=.",
+			"..mmm.mmm..mmm..",
+			"=########=######",
+			"=........=......",
+			"=........=......",
+			"@.OO1.OOO2.OOO3.",
 			"################",
 		],
 	},
@@ -128,16 +187,63 @@ static func count() -> int:
 
 
 static func get_level(index: int) -> Level:
-	var lv := Level.new()
 	if index < 0 or index >= LEVELS.size():
-		return lv
+		return Level.new()
 	var raw: Dictionary = LEVELS[index]
-	lv.name = String(raw["name"])
-	lv.target = int(raw["target"])
-	lv.seconds = float(raw["seconds"])
-	var rows: PackedStringArray = raw["map"]
-	lv.map = rows.duplicate()
+	return from_map(String(raw["name"]), raw["map"] as PackedStringArray)
+
+
+## Builds a level from a map. Shared by get_level and the tests, so a synthetic
+## level in a test goes through exactly the same indexing as a shipped one.
+static func from_map(level_name: String, map: PackedStringArray) -> Level:
+	var lv := Level.new()
+	lv.name = level_name
+	lv.map = map.duplicate()
+	_index(lv)
 	return lv
+
+
+## Walks the map once and pulls out every run, spawn and plate. Doing this in one
+## pass means Board never has to re-derive geometry the level already knows.
+static func _index(lv: Level) -> void:
+	lv.plates.clear()
+	lv.ingredients.clear()
+	lv.enemies.clear()
+	lv.enemy_kinds.clear()
+	var claimed := {}
+
+	for y in lv.map.size():
+		var row: String = lv.map[y] if y < lv.map.size() else ""
+		var x := 0
+		while x < row.length():
+			var ch := row[x]
+			if ch == "@":
+				lv.chef = Vector2i(x, y)
+			elif ENEMY_CHARS.contains(ch):
+				lv.enemies.append(Vector2i(x, y))
+				lv.enemy_kinds[Vector2i(x, y)] = ENEMY_KIND[ch]
+			# A run is consumed in one go so the cells inside it are not
+			# re-read as the start of another object.
+			var run := 1
+			while x + run < row.length() and row[x + run] == ch:
+				run += 1
+			if INGREDIENT_CHARS.contains(ch):
+				var span := Span.new()
+				span.ch = ch
+				span.x = x
+				span.y = y
+				span.width = run
+				lv.ingredients.append(span)
+				for i in run:
+					claimed[Vector2i(x + i, y)] = true
+			elif ch == PLATE_CHAR:
+				var plate := Span.new()
+				plate.ch = ch
+				plate.x = x
+				plate.y = y
+				plate.width = run
+				lv.plates.append(plate)
+			x += run
 
 
 ## Returns an array of human-readable problems. Empty means the level is valid.
@@ -158,82 +264,183 @@ static func validate(lv: Level) -> PackedStringArray:
 			if not LEGAL_CHARS.contains(c):
 				problems.append("row %d col %d has illegal char '%s'" % [y, x, c])
 
-	# The player must stand on something.
-	var spawns := find_all(lv, "P")
-	if spawns.is_empty():
-		problems.append("no player start 'P'")
-	for cell in spawns:
+	if lv.plates.is_empty():
+		problems.append("no plates: there would be nothing to build a burger on")
+	if lv.ingredients.is_empty():
+		problems.append("no ingredients in the maze")
+
+	# Every plate must have a buildable recipe, and every ingredient must be able
+	# to reach a plate. Both are checked here rather than discovered in play,
+	# because an unfinishable level cannot be tested by beating it.
+	for plate in lv.plates:
+		var recipe := lv.recipe(plate)
+		if not Food.stack_is_burger(recipe):
+			problems.append("plate at %s needs a stack that is not a burger: %s" % [
+				_plate_label(plate), _recipe_label(recipe)])
+	for ing in lv.ingredients:
+		var home: Span = null
+		for plate in lv.plates:
+			if ing.overlaps(plate):
+				home = plate
+				break
+		if home == null:
+			problems.append("ingredient '%s' at row %d cols %d-%d is not above any plate"
+				% [ing.ch, ing.y, ing.x, ing.right()])
+
+	if not _has_char(lv, CHEF_CHAR):
+		problems.append("no chef start '%s'" % CHEF_CHAR)
+	for cell in lv.enemies:
 		if not _supported(lv, cell):
-			problems.append("player start at %s has no floor beneath it" % cell)
+			problems.append("enemy at %s has no floor beneath it" % cell)
+	if not _has_char(lv, CHEF_CHAR) or not _supported(lv, lv.chef):
+		problems.append("chef start has no floor beneath it")
 
-	if lv.target < 1:
-		problems.append("target must be at least 1")
-	if lv.seconds <= 0.0:
-		problems.append("seconds must be positive")
+	# Ladders are the only way between rows, so a run that does not join two
+	# standable rows is a trap rather than a shortcut.
+	for run in _ladder_runs(lv):
+		var x: int = run["x"]
+		var top: int = run["top"]
+		var bottom: int = run["bottom"]
+		if not _standable(lv, Vector2i(x, bottom + 1)):
+			problems.append(
+				"ladder in column %d rows %d-%d has no floor at its foot" % [x, top, bottom])
+		if not _traversable(lv, Vector2i(x, top - 1)):
+			problems.append(
+				"ladder in column %d rows %d-%d goes nowhere at its head" % [x, top, bottom])
 
-	# Everything the player must interact with has to be reachable on foot.
+	# The chef has to be able to walk to every ingredient, and all the way across
+	# it - crossing only part of a wide part is not a push. Otherwise a level can
+	# be unwinnable with the map looking fine.
 	var walkable := _reachable(lv)
-	if not walkable.is_empty():
-		for cell in find_all(lv, "T") + find_all(lv, "s"):
-			if cell not in walkable:
-				problems.append("cell %s is unreachable from the player start" % cell)
-		for cell in find_all(lv, "b") + find_all(lv, "l") + find_all_lettuce(lv):
-			if not _touching_walkable(lv, cell, walkable):
-				problems.append("dispenser at %s cannot be reached from the player start" % cell)
+	for ing in lv.ingredients:
+		for cell in ing.cells():
+			if not walkable.has(cell):
+				problems.append("ingredient '%s' row %d col %d cannot be reached by the chef"
+					% [ing.ch, ing.y, cell.x])
+				break
+	for cell in lv.enemies:
+		if not walkable.has(cell) and not walkable.has(cell + Vector2i.UP):
+			problems.append("enemy at %s can never leave its floor" % cell)
 	return problems
 
 
-static func find_all_lettuce(lv: Level) -> Array[Vector2i]:
-	return find_all(lv, "l") + find_all(lv, "t") + find_all(lv, "c") + find_all(lv, "m")
-
-
-## Flood fill of the cells the player can walk to. Ladders are walkable,
-## tables are walkable (they are counters), solid tiles and dispensers are not.
-static func _reachable(lv: Level) -> Dictionary:
-	var seen := {}
-	var start := find_all(lv, "P")
-	if start.is_empty():
-		return seen
-	var stack: Array[Vector2i] = [start[0]]
-	seen[start[0]] = true
-	var steps := [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]
-	while not stack.is_empty():
-		var cell: Vector2i = stack.pop_back()
-		for step in steps:
-			var next: Vector2i = cell + step
-			if seen.has(next):
-				continue
-			if not Cfg.GRID_RECT.has_point(next) or next.y >= lv.map.size():
-				continue
-			var ch: String = lv.map[next.y][next.x]
-			if BLOCKING_CHARS.contains(ch):
-				continue
-			seen[next] = true
-			stack.append(next)
-	return seen
-
-
-static func _touching_walkable(lv: Level, cell: Vector2i, walkable: Dictionary) -> bool:
-	for step in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
-		if walkable.has(cell + step):
+static func _has_char(lv: Level, ch: String) -> bool:
+	for y in lv.map.size():
+		if y < lv.map[y].length() and lv.map[y].find(ch) != -1:
 			return true
 	return false
 
 
-static func find_all(lv: Level, ch: String) -> Array[Vector2i]:
-	var out: Array[Vector2i] = []
-	for y in lv.map.size():
-		if y >= lv.map[y].length():
-			continue
-		var row: String = lv.map[y]
-		for x in row.length():
-			if row[x] == ch:
-				out.append(Vector2i(x, y))
-	return out
+static func _plate_label(plate: Span) -> String:
+	return "row %d cols %d-%d" % [plate.y, plate.x, plate.right()]
+
+
+static func _recipe_label(recipe: Array) -> String:
+	var parts := PackedStringArray()
+	for kind: int in recipe:
+		parts.append(Food.display_name(kind))
+	return ", ".join(parts)
+
+
+## The character at a cell, or "" if the map does not cover it.
+##
+## The validator has to survive a malformed map - reporting "row 3 is 14 cells
+## wide" is the entire reason to run it on one - so every lookup in here is
+## bounds-checked rather than trusting the map to be the right shape.
+static func _char_at(lv: Level, cell: Vector2i) -> String:
+	if cell.y < 0 or cell.y >= lv.map.size():
+		return ""
+	var row: String = lv.map[cell.y]
+	if cell.x < 0 or cell.x >= row.length():
+		return ""
+	return row[cell.x]
+
+
+## Whether the chef can stand in a cell. He needs a floor: a platform, a wall, a
+## plate, or the top of a ladder he has just climbed.
+static func _standable(lv: Level, cell: Vector2i) -> bool:
+	if not _passable(lv, cell):
+		return false
+	return _char_at(lv, cell + Vector2i.DOWN) in ["#", "H", "=", PLATE_CHAR]
+
+
+## A cell the chef can be in. Standing somewhere, or partway up a ladder.
+static func _traversable(lv: Level, cell: Vector2i) -> bool:
+	return _standable(lv, cell) or _is_ladder(lv, cell)
+
+
+## Ladders and platforms stop him; food does not. He walks over ingredients, and
+## crossing one is what knocks it down, so an ingredient cell is walkable floor
+## to him exactly as it is in Board.blocks_player().
+static func _passable(lv: Level, cell: Vector2i) -> bool:
+	if not Cfg.GRID_RECT.has_point(cell):
+		return false
+	return not SOLID_CHARS.contains(_char_at(lv, cell))
+
+
+static func _is_ladder(lv: Level, cell: Vector2i) -> bool:
+	if not Cfg.GRID_RECT.has_point(cell):
+		return false
+	return _char_at(lv, cell) == LADDER_CHAR
+
+
+## Flood fill of the cells the chef can actually get to, modelling the two
+## movements he has: walk along a row, and climb a ladder.
+##
+## The earlier version of this treated every non-solid cell as walkable, which
+## made open air "reachable" and so could never fail - a level with a ladder
+## that does not line up with the one above it looked fine and then trapped the
+## chef mid-platform in play. Rows are only connected through ladders here, which
+## is what makes this check worth having.
+static func _reachable(lv: Level) -> Dictionary:
+	var seen := {}
+	if not _has_char(lv, CHEF_CHAR):
+		return seen
+	var stack: Array[Vector2i] = [lv.chef]
+	seen[lv.chef] = true
+	var sides := [Vector2i.LEFT, Vector2i.RIGHT]
+	var vertical := [Vector2i.UP, Vector2i.DOWN]
+	while not stack.is_empty():
+		var cell: Vector2i = stack.pop_back()
+		for step in sides:
+			_walk(lv, seen, stack, cell, cell + step)
+		for step in vertical:
+			var next: Vector2i = cell + step
+			# Changing rows means climbing, and climbing means a ladder on one
+			# end of the move or the other.
+			if not (_is_ladder(lv, cell) or _is_ladder(lv, next)):
+				continue
+			_walk(lv, seen, stack, cell, next)
+	return seen
+
+
+static func _walk(lv: Level, seen: Dictionary, stack: Array, from: Vector2i, to: Vector2i) -> void:
+	if seen.has(to) or not _traversable(lv, to):
+		return
+	seen[to] = true
+	stack.append(to)
+
+
+## Every vertical run of ladder cells, bottom-to-top, grouped by column.
+##
+## A run is only a route if the chef can step on at the bottom and step off at
+## the top. Two ladders one column apart, or a ladder that dead-ends against a
+## platform, both pass a naive "is there a ladder here" check and both strand the
+## chef in play, so each run is checked against the cells just outside it.
+static func _ladder_runs(lv: Level) -> Array:
+	var runs: Array = []
+	for x in Cfg.GRID_W:
+		var y := 0
+		while y < lv.map.size():
+			if not _is_ladder(lv, Vector2i(x, y)):
+				y += 1
+				continue
+			var top := y
+			while y < lv.map.size() and _is_ladder(lv, Vector2i(x, y)):
+				y += 1
+			runs.append({"x": x, "top": top, "bottom": y - 1})
+	return runs
 
 
 static func _supported(lv: Level, cell: Vector2i) -> bool:
-	var below := cell + Vector2i.DOWN
-	if below.y >= lv.map.size():
-		return false
-	return lv.map[below.y][below.x] in ["#", "H", "T", "="]
+	return _char_at(lv, cell + Vector2i.DOWN) in ["#", "H", "="]
