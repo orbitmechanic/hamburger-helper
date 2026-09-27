@@ -20,7 +20,12 @@ jobs:
             "https://github.com/godotengine/godot/releases/download/${version}/Godot_v${version}_linux.x86_64.zip"
           curl -sSL -o SHA512-SUMS.txt \
             "https://github.com/godotengine/godot/releases/download/${version}/SHA512-SUMS.txt"
-          grep "Godot_v${version}_linux.x86_64.zip" SHA512-SUMS.txt | sed 's/$/  godot.zip/' | sha512sum -c -
+          # Rebuild the line as "<hash>  godot.zip" rather than appending to it:
+          # appending leaves two filenames on the line and sha512sum then looks
+          # for a single file with that whole string as its name.
+          grep "Godot_v${version}_linux.x86_64.zip" SHA512-SUMS.txt \
+            | awk '{print $1 "  godot.zip"}' \
+            | sha512sum -c -
           unzip -q godot.zip
           sudo install -m 755 "Godot_v${version}_linux.x86_64" /usr/local/bin/godot
           godot --version
