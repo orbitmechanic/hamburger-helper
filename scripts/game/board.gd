@@ -104,7 +104,7 @@ func _set_tile(cell: Vector2i, t: Tile) -> void:
 
 
 func in_bounds(cell: Vector2i) -> bool:
-	return cell.x >= 0 and cell.y >= 0 and cell.x < Cfg.GRID_W and cell.y < Cfg.GRID_H
+	return Cfg.GRID_RECT.has_point(cell)
 
 
 func tile_at(cell: Vector2i) -> Tile:

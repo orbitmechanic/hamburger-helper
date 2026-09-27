@@ -61,7 +61,7 @@ static func ease_out(t: float) -> float:
 
 
 func in_bounds(c: Vector2i) -> bool:
-	return c.x >= 0 and c.y >= 0 and c.x < Cfg.GRID_W and c.y < Cfg.GRID_H
+	return Cfg.GRID_RECT.has_point(c)
 
 
 ## Whether a mover can step into this cell: in bounds and not solid to it.

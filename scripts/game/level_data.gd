@@ -203,7 +203,7 @@ static func _reachable(lv: Level) -> Dictionary:
 			var next: Vector2i = cell + step
 			if seen.has(next):
 				continue
-			if next.x < 0 or next.y < 0 or next.x >= Cfg.GRID_W or next.y >= lv.map.size():
+			if not Cfg.GRID_RECT.has_point(next) or next.y >= lv.map.size():
 				continue
 			var ch: String = lv.map[next.y][next.x]
 			if BLOCKING_CHARS.contains(ch):

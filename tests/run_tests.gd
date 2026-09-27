@@ -23,6 +23,7 @@ func _ready() -> void:
 func _run() -> void:
 	print_rich("[b]Hamburger Helper - test suite[/b]")
 
+	_test_input_map()
 	_test_levels_validate()
 	_test_level_geometry()
 	_test_burger_scoring()
@@ -49,6 +50,41 @@ func _run() -> void:
 	else:
 		print_rich("[color=red]FAIL[/color]  %d passed, %d failed" % [_passed, _failed])
 		get_tree().quit(1)
+
+
+## The input map now lives in project.godot rather than being registered in code
+## at startup, which is where the editor expects it. Nothing else notices when
+## that file is edited by hand or regenerated, so the actions and the keys the
+## game documents are checked here.
+func _test_input_map() -> void:
+	_begin("input map")
+	var expected := {
+		"move_left": [KEY_LEFT, KEY_A],
+		"move_right": [KEY_RIGHT, KEY_D],
+		"move_up": [KEY_UP, KEY_W],
+		"move_down": [KEY_DOWN, KEY_S],
+		"jump": [KEY_SPACE, KEY_X],
+		"throw": [KEY_Z, KEY_C],
+		"pause": [KEY_ESCAPE, KEY_P],
+		"restart": [KEY_R],
+		"confirm": [KEY_ENTER, KEY_SPACE],
+	}
+	for action: String in expected:
+		if not InputMap.has_action(action):
+			check(false, "%s is mapped" % action, "no such action")
+			continue
+		var keys: Array = []
+		for event in InputMap.action_get_events(action):
+			if event is InputEventKey and event.physical_keycode != 0:
+				keys.append(event.physical_keycode)
+		var missing: Array = []
+		for key: int in expected[action]:
+			if not keys.has(key):
+				missing.append(OS.get_keycode_string(key))
+		check(missing.is_empty(), "%s has its keys" % action,
+			"missing %s" % ", ".join(missing))
+		check(InputMap.action_get_events(action).size() > 0,
+			"%s has bindings" % action)
 
 
 ## Salt is a tray sentinel, not a food. Placing it must not turn it into an
