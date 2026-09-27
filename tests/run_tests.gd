@@ -36,6 +36,7 @@ func _run() -> void:
 	await _test_leaving_a_ladder()
 	await _test_climbing_off_the_top()
 	await _test_tray_capacity()
+	await _test_salt_is_never_placed_as_food()
 	await _test_respawn_grace()
 	await _test_every_level_starts()
 	await _test_level_intro()
@@ -48,6 +49,61 @@ func _run() -> void:
 	else:
 		print_rich("[color=red]FAIL[/color]  %d passed, %d failed" % [_passed, _failed])
 		get_tree().quit(1)
+
+
+## Salt is a tray sentinel, not a food. Placing it must not turn it into an
+## Ingredient, because an Ingredient with kind -1 asks the food table for the
+## colour of a burger part that does not exist and the draw call throws.
+func _test_salt_is_never_placed_as_food() -> void:
+	_begin("salt placement")
+	var harness := _Harness.new(self)
+	await harness.setup(0)
+	var player := harness.player
+
+	# Stand on the salt pile in the spawn room and pick it up.
+	var salt_at := Vector2i.ZERO
+	var best := 1 << 30
+	for cell in harness.board.salt_cells:
+		var d: int = absi(cell.y - player.cell.y) + absi(cell.x - player.cell.x)
+		if d < best:
+			best = d
+			salt_at = cell
+	check(salt_at != Vector2i.ZERO, "level 1 has a salt pile below the chef")
+	player.place(salt_at)
+	await harness.frames(2)
+	player._take_one()
+	check(player.tray.has(Player.SALT), "the chef picks up the salt",
+		"tray is %s" % str(player.tray))
+	check(player.tray.size() == 1, "and the tray holds just that")
+
+	# Now press the place key while standing on bare floor, not on a counter.
+	check(harness.board.tile_at(player.cell) != Board.Tile.TABLE,
+		"the chef is not on a counter")
+	player.place(salt_at + Vector2i(0, 1))
+	await harness.frames(2)
+	# Count the requests rather than the nodes: the harness wires up
+	# want_ingredient but not want_salt, and what matters here is which of the
+	# two the place key asks for. A Dictionary, because GDScript lambdas capture
+	# locals by value and an int would never come back out.
+	var asked := {"salt": 0, "ing": 0}
+	player.want_salt.connect(func(_cell: Vector2i, _facing: int) -> void:
+		asked["salt"] += 1)
+	player.want_ingredient.connect(func(_cell: Vector2i, _kind: Food.Kind) -> void:
+		asked["ing"] += 1)
+	player._place_one()
+	await harness.frames(4)
+	check(player.tray.is_empty(), "the salt leaves the tray",
+		"tray is %s" % str(player.tray))
+	check(asked["salt"] == 1, "placing salt throws a salt packet",
+		"salt requests %d" % asked["salt"])
+	check(asked["ing"] == 0, "and never asks for an ingredient to spawn",
+		"ingredient requests %d" % asked["ing"])
+
+	# The guard that keeps this class of bug from reaching the renderer.
+	check(Food.is_kind(Food.Kind.BUN_BOTTOM), "a real food part is a kind")
+	check(not Food.is_kind(Player.SALT), "the salt sentinel is not a kind",
+		"the sentinel is %d" % Player.SALT)
+	harness.teardown()
 
 
 ## A chef that respawns onto the pad where it just died must get a moment of

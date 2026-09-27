@@ -84,6 +84,14 @@ static func def(kind: Kind) -> Dictionary:
 	return DEFS[kind]
 
 
+## Whether this is a real burger part. The tray uses -1 as a sentinel for a salt
+## packet, and that sentinel must never reach anything that looks a kind up in
+## DEFS: indexing the table with it throws, and it throws from _draw, so the
+## error surfaces as a crash while rendering rather than where it was caused.
+static func is_kind(kind: int) -> bool:
+	return DEFS.has(kind)
+
+
 static func display_name(kind: Kind) -> String:
 	return String(DEFS[kind]["name"])
 

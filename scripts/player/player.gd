@@ -291,6 +291,14 @@ func _take_one() -> void:
 func _place_one() -> void:
 	var kind: int = tray.pop_front()
 	tray_changed.emit()
+	# Salt is a tray sentinel, not a food, and it has no resting state: a Salt
+	# packet slides along the counters and is spent. Placing one used to build
+	# an Ingredient with kind -1, which asked the food table for the colour of a
+	# burger part that does not exist and threw on every draw. Salt piles exist
+	# only where the level map puts them, so the only honest move is to throw it.
+	if kind == SALT:
+		want_salt.emit(cell, facing)
+		return
 	if board.tile_at(cell) == Board.Tile.TABLE:
 		var stack := board.push_to_table(cell, kind)
 		_credit_burger(stack)

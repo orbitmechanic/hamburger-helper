@@ -109,6 +109,12 @@ func _spawn_enemies() -> void:
 
 
 func _on_want_ingredient(cell: Vector2i, kind: Food.Kind) -> void:
+	# Backstop for the whole class of bug: a bad kind reaching an Ingredient
+	# crashes in its _draw, which reads as the renderer failing rather than a
+	# caller passing nonsense, and it would do so every frame until reload.
+	if not Food.is_kind(kind):
+		push_warning("ignored an ingredient request for invalid kind %d" % kind)
+		return
 	var ing := Ingredient.new()
 	_actor_parent().add_child(ing)
 	ing.setup(board, cell, kind)
