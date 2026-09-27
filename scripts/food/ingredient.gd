@@ -25,10 +25,7 @@ var rest_row := 0
 var support_row := 0
 var falling := false
 
-var _t := 0.0
-var _dur := 0.075
-var _from := Vector2.ZERO
-var _to := Vector2.ZERO
+var _tween: Tween
 
 
 func setup(p_board: Board, span: LevelData.Span) -> void:
@@ -96,25 +93,22 @@ func _drop() -> Dictionary:
 ## somehow occupied the part stays put rather than overlapping.
 func _relocate(row: int, support: int) -> Dictionary:
 	var where := {"row": rest_row, "support": support_row}
-	# Vector2i is a value type, so `for cell in moved` hands out copies and
-	# writing to them is lost. Walk by index so the array really moves.
-	var moved := cells.duplicate()
-	for i in moved.size():
-		var cell := moved[i] as Vector2i
-		cell.y = row
-		moved[i] = cell
+	# Vector2i is a value type, so writing to a cell out of `for cell in cells`
+	# is lost. Array.map() builds the new array instead, and assign() puts it
+	# back into the typed array board.claim() wants - map() on its own returns
+	# an untyped Array, which is a different type as far as the call goes.
+	var moved: Array[Vector2i] = []
+	moved.assign(cells.map(func(cell: Vector2i) -> Vector2i: return Vector2i(cell.x, row)))
 	board.release(cells)
 	if not board.claim(moved, self):
 		board.claim(cells, self)
 		return where
 	cells = moved
-	_from = position
-	_to = _pixels_for_row(row)
 	rest_row = row
 	support_row = support
 	falling = true
-	_t = _dur
 	dropped.emit(1, cells[0])
+	_fall_to(_pixels_for_row(row))
 	return {"row": row, "support": support}
 
 
@@ -129,26 +123,34 @@ func _board(plate: LevelData.Span) -> Dictionary:
 	return {"plate": plate}
 
 
-func _process(delta: float) -> void:
-	if not falling:
-		return
-	_t -= delta
-	var a := clampf(1.0 - _t / _dur, 0.0, 1.0)
-	position = _from.lerp(_to, a)
-	if _t > 0.0:
-		return
-	position = _to
+## The fall is a Tween, not a counter. Godot already runs a timed property change
+## to completion and reports when it is done, so there is no _t to keep in step
+## with delta and no way for the two to disagree about when the part has landed.
+func _fall_to(to: Vector2) -> void:
+	if _tween != null and _tween.is_valid():
+		_tween.kill()
+	_tween = create_tween()
+	_tween.set_trans(Tween.TRANS_LINEAR)
+	_tween.tween_property(self, "position", to, Cfg.STEP_FALL)
+	_tween.finished.connect(_on_fallen)
+
+
+func _on_fallen() -> void:
 	falling = false
 	queue_redraw()
 
 
+## Pixel position of this run on `row`.
+##
+## The run is turned into a Rect2 in cell units and asked for its centre, which is
+## what keeps a part drawn over the middle of the cells it occupies. Averaging the
+## cell coordinates by hand and adding half the run's width put a wide part half
+## its own width to the right of where it stood, so a three-cell patty visibly
+## slid as it fell and then snapped back onto the plate when it boarded.
 func _pixels_for_row(row: int) -> Vector2:
-	var x := 0
-	for cell in cells:
-		x += cell.x
-	x = x / cells.size() if not cells.is_empty() else 0
-	var half := cells.size() * Cfg.TILE * 0.5
-	return Vector2(x * Cfg.TILE + half, (row + 0.5) * Cfg.TILE)
+	if cells.is_empty():
+		return Vector2.ZERO
+	return Rect2(cells[0].x, row, cells.size(), 1).get_center() * Cfg.TILE
 
 
 func _draw() -> void:

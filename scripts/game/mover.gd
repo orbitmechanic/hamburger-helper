@@ -7,6 +7,10 @@ extends Node2D
 
 signal step_finished
 
+## ease()'s curve argument for an ease-out cubic. Godot implements this exactly,
+## so the easing is the engine's rather than a pow() written out here.
+const CURVE_CUBIC_OUT := 3.0
+
 var board: Board
 var cell := Vector2i.ZERO
 var moving := false
@@ -40,7 +44,7 @@ func tick_step(delta: float) -> bool:
 		return false
 	_step_t -= delta
 	var t := clampf(1.0 - _step_t / _step_dur, 0.0, 1.0)
-	position = _from.lerp(_to, ease_out(t))
+	position = _from.lerp(_to, ease(t, CURVE_CUBIC_OUT))
 	if _step_t > 0.0:
 		return false
 	position = _to
@@ -56,14 +60,6 @@ func step_phase() -> float:
 	return clampf(1.0 - _step_t / _step_dur, 0.0, 1.0)
 
 
-static func ease_out(t: float) -> float:
-	return 1.0 - pow(1.0 - t, 3.0)
-
-
-func in_bounds(c: Vector2i) -> bool:
-	return Cfg.GRID_RECT.has_point(c)
-
-
 ## Whether a mover can step into this cell: in bounds and not solid to it.
 ##
 ## This is the whole movement rule, and it deliberately does not ask whether the
@@ -73,4 +69,4 @@ func in_bounds(c: Vector2i) -> bool:
 ## falling ingredient up, and using it here is what used to strand the chef on
 ## every ladder: stepping off one needs can_enter(), not supports_actor().
 func can_enter(c: Vector2i) -> bool:
-	return in_bounds(c) and not board.blocks_player(c)
+	return Cfg.in_grid(c) and not board.blocks_player(c)

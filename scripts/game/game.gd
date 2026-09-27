@@ -45,10 +45,12 @@ func _ready() -> void:
 ## Ignored unless the argument is given.
 func _requested_level() -> int:
 	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--level="):
-			var wanted := int(arg.substr(8))
-			if wanted >= 0 and wanted < LevelData.count():
-				return wanted
+		var text := arg.trim_prefix("--level=")
+		if text == arg or not text.is_valid_int():
+			continue
+		var wanted := text.to_int()
+		if wanted >= 0 and wanted < LevelData.count():
+			return wanted
 	return GameState.level_index
 
 
@@ -211,15 +213,22 @@ func _collect(bonus: Bonus) -> void:
 
 ## Pepper is the one that has to appear where the chef can actually reach it, so
 ## the cell is drawn from the walk rows rather than the whole grid.
+##
+## The candidates are collected and sampled with pick_random() instead of rolling
+## and rejecting: rejection sampling needed a retry cap that silently degraded to
+## "no bonus appears" on a crowded board, and picked a uniform cell from a list
+## is both exact and shorter.
 func _random_walk_row_cell() -> Vector2i:
-	for i in 24:
-		var at := Vector2i(randi_range(1, Cfg.GRID_W - 2), randi_range(0, Cfg.GRID_H - 1))
-		if not board.in_bounds(at) or board.blocks_player(at):
-			continue
-		if not board.floor_below(at):
-			continue
-		return at
-	return Vector2i(-1, -1)
+	var candidates: Array[Vector2i] = []
+	for x in range(1, Cfg.GRID_W - 1):
+		for y in Cfg.GRID_H:
+			var at := Vector2i(x, y)
+			if board.blocks_player(at) or not board.floor_below(at):
+				continue
+			candidates.append(at)
+	if candidates.is_empty():
+		return Vector2i(-1, -1)
+	return candidates.pick_random()
 
 
 func _random_bonus_kind() -> Bonus.Kind:
@@ -229,6 +238,25 @@ func _random_bonus_kind() -> Bonus.Kind:
 	if roll < 0.9:
 		return Bonus.Kind.STUN
 	return Bonus.Kind.LIFE
+
+
+## Pepper is fired, not automatic.
+##
+## Spending a charge on whichever nasty the chef happened to brush past made the
+## jars a resource the player never chose how to use, and the common case was
+## wasting one on a nasty who was about to walk off the ledge anyway. So the
+## chef throws it himself: the key ghosts him for a moment, and the first nasty
+## he touches inside that window is the one that gets zapped. Pressing it with
+## nothing left says so rather than doing nothing quietly.
+func _fire_pepper() -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	if not Input.is_action_just_pressed(&"pepper"):
+		return
+	if not player.use_pepper():
+		_popup("NO PEPPER", Cfg.COL_PLATE)
+		return
+	_popup("PEPPER!", Cfg.COL_PEPPER)
 
 
 # --- Loss ------------------------------------------------------------------
@@ -243,11 +271,11 @@ func _check_catches() -> void:
 	if player.state == Player.St.JUMP:
 		return
 	if player.ghost():
-		# Pepper is spent by touching the first nasty, and that nasty is stunned.
+		# A thrown pepper has already been paid for by the key press, so the
+		# nasty that runs into the shimmer is stunned and no charge is spent.
 		for e in get_tree().get_nodes_in_group(&"enemies"):
 			var enemy := e as Enemy
 			if enemy != null and is_instance_valid(enemy) and _touching(enemy.cell):
-				player.use_pepper()
 				enemy.stun()
 				_popup("ZAP!", Cfg.COL_PEPPER)
 				return
@@ -300,6 +328,7 @@ func _process(delta: float) -> void:
 	match phase:
 		Phase.PLAYING:
 			_process_bonuses(delta)
+			_fire_pepper()
 			_check_catches()
 		_:
 			# Everything that is not PLAYING just runs its phase timer down, which

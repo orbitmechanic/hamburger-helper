@@ -30,6 +30,10 @@ func _run() -> void:
 	_test_levels_validate()
 	_test_validator_has_teeth()
 	_test_level_geometry()
+	await _test_parts_are_centred()
+	_test_ingredient_columns_line_up()
+	_test_burgers_have_room()
+	_test_enemies_are_spread_out()
 	_test_burger_order()
 	_test_burger_scoring()
 	await _test_board_tiles()
@@ -43,6 +47,7 @@ func _run() -> void:
 	await _test_ladder_climb()
 	await _test_player_falls_off_a_ledge()
 	await _test_pepper_stuns_a_nasty()
+	await _test_pepper_is_fired_by_a_key()
 	await _test_falling_food_squashes()
 	await _test_riding_a_part()
 	await _test_game_starts_every_level()
@@ -74,6 +79,7 @@ func _test_input_map() -> void:
 		"move_up": [KEY_UP, KEY_W],
 		"move_down": [KEY_DOWN, KEY_S],
 		"jump": [KEY_SPACE, KEY_X],
+		"pepper": [KEY_F],
 		"pause": [KEY_ESCAPE, KEY_P],
 		"confirm": [KEY_ENTER, KEY_SPACE],
 	}
@@ -263,6 +269,147 @@ func _test_level_geometry() -> void:
 			kinds[lv.enemy_kinds[cell]] = true
 		check(kinds.size() == 3, "%s uses hot dog, egg and pickle" % tag,
 			"found %d kinds" % kinds.size())
+
+
+## A part is drawn over the middle of the cells it occupies, and the burger it
+## joins is drawn over the middle of the plate. If those two centres disagree,
+## the stack visibly shifts sideways when the part boards. Averaging the cell
+## coordinates by hand and adding half the run's width put a three-cell part a
+## cell and a half to the right of where it actually stood, which is what the
+## shifting was.
+func _test_parts_are_centred() -> void:
+	_begin("a wide part is centred on its cells")
+	var h := _Harness.new(self)
+	# No plates: a part that reached one would board, leave the maze and be
+	# freed, which is not what is being measured here. It falls to the ledge
+	# under row 9 instead, which is a real fall and a real resting place.
+	await h.setup(_blank_map())
+	if h.board == null:
+		return
+	var widths := {1: 1, 2: 3, 3: 6}
+	for width: int in widths:
+		var at_x: int = widths[width]
+		var ing := _add_ingredient(h, h.board, "m", at_x, width, 6)
+		var want := Rect2(at_x, 6, width, 1).get_center() * Cfg.TILE
+		check(ing.position.distance_to(want) < 0.01,
+			"a %d-cell part is drawn over the middle of its cells" % width,
+			"at %s, wanted %s" % [str(ing.position), str(want)])
+		# And it is still centred wherever it comes to rest.
+		ing.position = Vector2(0, 0)
+		ing.knock()
+		await h.until(func() -> bool: return not ing.falling)
+		var landed := Rect2(at_x, ing.rest_row, width, 1).get_center() * Cfg.TILE
+		check(ing.position.distance_to(landed) < 0.01,
+			"and is still centred after falling to row %d" % ing.rest_row,
+			"at %s, wanted %s" % [str(ing.position), str(landed)])
+	h.teardown()
+
+
+## An ingredient and the plate it lands on have to occupy the same cells.
+##
+## A part keeps its own column all the way down, and the finished burger is drawn
+## over the plate's column, so a narrower or wider part above a plate snaps
+## sideways as it boards. A three-cell patty over a two-cell plate is the obvious
+## case: the patty visibly slid across the maze on the way down and jumped at the
+## bottom. This is checked against the shipped maps so the alignment cannot be
+## broken by a hand edit of a level.
+func _test_ingredient_columns_line_up() -> void:
+	_begin("ingredient columns line up with their plate")
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		var tag := "level %d" % (i + 1)
+		var mismatched: Array = []
+		for ing in lv.ingredients:
+			for plate in lv.plates:
+				if not ing.overlaps(plate):
+					continue
+				if ing.x != plate.x or ing.width != plate.width:
+					mismatched.append("%s cols %d-%d over plate cols %d-%d" % [
+						ing.ch, ing.x, ing.right(), plate.x, plate.right()])
+		check(mismatched.is_empty(), "%s lines every ingredient up with its plate" % tag,
+			"; ".join(mismatched))
+
+
+## A burger grows upward from its plate, one row per layer, and a part cannot fall
+## through a platform. So the rows above a plate have to stay clear for the whole
+## recipe or the burger stops growing partway and the level cannot be finished.
+## An earlier version of the levels put a ledge on row 10, which capped every
+## burger at two layers and left all three levels unwinnable.
+func _test_burgers_have_room() -> void:
+	_begin("burgers have room to grow")
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		var tag := "level %d" % (i + 1)
+		var problems: Array = []
+		for plate in lv.plates:
+			problems.append_array(LevelData._clearance_problems(lv, plate, lv.recipe(plate).size()))
+		check(problems.is_empty(), "%s gives every plate room for its burger" % tag,
+			"; ".join(problems))
+
+		# The room also has to be real, not just unchecked space: the top layer
+		# must land clear of the lowest ledge above the plate, and clear of every
+		# row the chef walks in, or a finished burger stands in a doorway.
+		var blocked := []
+		for plate in lv.plates:
+			var layers: int = lv.recipe(plate).size()
+			var top: int = plate.y - layers
+			for row in range(top, plate.y):
+				for x in range(plate.x, plate.right() + 1):
+					var ch: String = lv.map[row][x]
+					if ch in ["#", "H", "="]:
+						blocked.append("plate cols %d-%d row %d is '%s'"
+							% [plate.x, plate.right(), row, ch])
+		check(blocked.is_empty(), "%s keeps finished burgers out of the geometry" % tag,
+			"; ".join(blocked))
+
+	# The clearance check has to be able to fail, or the positive results above
+	# mean nothing. Row 10 is a ledge in this map, and the plate's column runs
+	# straight through it.
+	var too_tight := _map([
+		"...............",
+		"################",
+		"...............",
+		"...............",
+		"################",
+		"...............",
+		"...............",
+		"################",
+		"...............",
+		"...............",
+		"#####OOO########",
+		"...............",
+		"...............",
+		"...............",
+		"################",
+	])
+	var tall := LevelData.from_map("no room", too_tight)
+	var reported: Array = []
+	for plate in tall.plates:
+		reported.append_array(LevelData._clearance_problems(tall, plate, 3))
+	check(not reported.is_empty(), "a burger with nowhere to grow is reported",
+		"got %d problems" % reported.size())
+
+
+## Nasties are spread over the storeys and start well clear of the chef.
+##
+## With all of them on the ground floor, the start of a level is a walk along one
+## row and a chef who starts next to one has no first move. Both are checked so
+## the maps cannot quietly drift back to a bottom-floor line-up.
+func _test_enemies_are_spread_out() -> void:
+	_begin("enemies are spread out")
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		var tag := "level %d" % (i + 1)
+		var rows := {}
+		var closest := 999
+		for cell in lv.enemies:
+			rows[cell.y] = true
+			closest = mini(closest, absi(cell.x - lv.chef.x) + absi(cell.y - lv.chef.y))
+		check(rows.size() >= 2, "%s starts its nasties on more than one storey" % tag,
+			"all on row %d" % lv.enemies[0].y)
+		check(closest >= LevelData.ENEMY_MIN_DISTANCE,
+			"%s starts every nasty at least %d cells from the chef" % [tag, LevelData.ENEMY_MIN_DISTANCE],
+			"closest is %d" % closest)
 
 
 # --- Food ------------------------------------------------------------------
@@ -634,6 +781,73 @@ func _test_pepper_stuns_a_nasty() -> void:
 
 	enemy.stun(3.0)
 	check(enemy.state == Enemy.St.STUN, "a stung nasty stops")
+	h.teardown()
+
+
+## The most recent popup the game raised, which is how the tests read the short
+## confirmations pepper and its bonuses put on screen.
+func _last_popup(g: Game) -> String:
+	var all := g.popups()
+	if all.is_empty():
+		return ""
+	return String((all[all.size() - 1] as Dictionary)["text"])
+
+
+## The pepper key is what spends a charge, not touching a nasty.
+##
+## Spending it automatically on the first thing the chef brushed past made the
+## jars something the player never chose how to use, so it is now thrown with the
+## pepper action and only the window it opens can zap a nasty.
+func _test_pepper_is_fired_by_a_key() -> void:
+	_begin("pepper is fired by a key")
+	var h := _Harness.new(self)
+	var g := await h.start_game(0)
+	if g == null:
+		return
+	g._enter(Game.Phase.PLAYING)
+	await h.frame()
+	var player := g.player
+
+	player.pepper_left = 0
+	player.pepper_time = 0.0
+	check(not player.ghost(), "the chef starts solid")
+
+	# The key with an empty jar does nothing at all, and says so.
+	Input.action_press(&"pepper")
+	await h.frame()
+	Input.action_release(&"pepper")
+	await h.frame()
+	check(not player.ghost(), "pressing pepper with an empty jar does nothing")
+	check(_last_popup(g) == "NO PEPPER", "and the chef is told why",
+		"popup was %s" % _last_popup(g))
+
+	# With a charge in the jar, the key opens the window.
+	player.add_pepper(1)
+	Input.action_press(&"pepper")
+	await h.frame()
+	Input.action_release(&"pepper")
+	await h.frame()
+	check(player.ghost(), "the pepper key makes the chef shimmer")
+	check(player.pepper_left == 0, "and spends a charge",
+		"%d left" % player.pepper_left)
+	check(_last_popup(g) == "PEPPER!", "with a confirmation")
+
+	# A nasty that walks into the shimmer is stunned, and the dose already paid
+	# for is not charged twice. The check is driven directly rather than left to
+	# a frame of game time, so it cannot lose a race with the nasty's own
+	# movement or with the five second dose running out.
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.add_to_group(&"enemies")
+	enemy.setup(g.board, player.cell + Vector2i.RIGHT, Enemy.Kind.HOTDOG, player)
+	enemy.place(player.cell + Vector2i.RIGHT)
+	player.pepper_time = Player.PEPPER_TIME
+	g._check_catches()
+	check(enemy.state == Enemy.St.STUN, "a nasty touching the shimmer is stunned",
+		"state is %d" % enemy.state)
+	check(player.pepper_left == 0, "zapping does not spend a second charge",
+		"%d left" % player.pepper_left)
+
 	h.teardown()
 
 

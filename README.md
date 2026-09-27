@@ -1,9 +1,9 @@
 # Hamburger Helper
 
 A 2D burger-stacking arcade game for [Godot](https://godotengine.org) 4.7, in the
-tradition of *Burgertime* (Data East, 1991). Assemble hamburgers from
-dispensed ingredients, deliver them to the plates before the clock runs out, and
-keep the hot dogs off your back.
+tradition of *Burgertime* (Data East, 1991). Walk the length of an ingredient to
+knock it down a storey, and use the floor plan to cascade a whole column of
+parts onto the plates below until the burgers are made. There is no clock.
 
 ## Running
 
@@ -24,15 +24,21 @@ fails to compile.
 
 | Action | Keys |
 |--------|------|
-| Move / climb | Arrow keys or WASD |
-| Grab, or place onto a counter | Space or X |
-| Throw the tray | Z or C |
+| Move, and climb ladders | Arrow keys or WASD |
+| Jump one cell | Space or X |
+| Throw pepper | F, or the gamepad B button |
 | Pause | P or Escape |
+| Restart | R |
 
-Walking into a dispenser drops its next ingredient at your feet, so simply
-leaning against one keeps it producing. Pressing into a solid counter starts a
-run along its top edge, which is how you cross a gap you would otherwise fall
-through.
+Walking the **full width** of a part knocks it down one storey, so a three-cell
+patty has to be crossed end to end. If there is another part underneath, that one
+goes too, which is how a column of ingredients is walked down to its plate: start
+at the top and the cascade carries the lot. Parts never stop at a ledge, they fall
+the height of the level, but a burger growing on a plate catches them.
+
+Pepper is thrown with the key, not spent automatically. A charge makes the chef
+shimmer for five seconds and the first nasty that touches the shimmer is stunned;
+the charge is not spent again on the zap.
 
 ## Design notes
 
@@ -43,39 +49,90 @@ per 16x16 grid cell:
 |------|---------|------|---------|
 | `.`  | empty   | `#`  | platform |
 | `H`  | wall    | `=`  | ladder |
-| `T`  | table / plate | `s` | salt pile |
-| `b`  | bun dispenser | `l` `t` `c` `m` | lettuce / tomato / cheese / meat |
-| `P`  | player start | `e` `p` `o` | hot dog / pickle / onion |
+| `O`  | plate | `@`  | chef start |
+| `b`  | bottom bun | `t` | top bun |
+| `m`  | patty | `l` `r` | lettuce / tomato |
+| `1`  | hot dog | `2` | fried egg |
+| `3`  | pickle | | |
+
+A horizontal run of one character is one object, and the length of the run is its
+width: `mm` is a single two-cell patty, not two one-cell patties.
 
 Keeping levels as text means a level tweak is a readable diff rather than an
-opaque scene edit, and `LevelData.validate()` checks geometry, player-start
-support, ladder contiguity, and reachability of every dispenser and table.
+opaque scene edit. `LevelData.validate()` checks row widths, legal characters,
+that every plate has a buildable recipe, that every ingredient stands over a
+plate, ladder contiguity, that every plate has **room to grow its burger**, that
+every ingredient is reachable by the chef, and that the nasties start spread out
+and clear of him.
+
+### Grid shape
+
+Ledges sit on rows 1, 4, 7 and 14, and the chef walks on rows 0, 3, 6 and 13.
+The three upper storeys hold the ingredients; the ground storey is deliberately
+tall, with rows 8 to 12 left open above the plates on row 13. That is the part
+that is easy to get wrong: a burger grows *upward* from its plate, one row per
+layer, and a part cannot fall through a platform, so a ledge anywhere in a
+plate's column caps that burger. An earlier version put a ledge on row 10, which
+capped every burger at two layers and left all three levels impossible to finish.
+`LevelData.validate()` now rejects a plate with no room, so that cannot ship
+again.
+
+An ingredient's cells have to line up exactly with the plate below it, because a
+part keeps its own column all the way down while the finished burger is drawn over
+the plate's column. A part narrower or wider than its plate visibly slides as it
+boards. Both are checked in tests.
 
 Movement is **cell-to-cell rather than physics-based**. Every actor resolves
 collisions against the `Board` grid, which makes movement exact, deterministic,
-and testable with no display. Tables are passable for the player (they are
-counters you step up onto) but solid for falling ingredients, which is what
-makes them work as assembly surfaces.
+and testable with no display. A part's drawn position is the centre of the
+`Rect2` spanning its cells, so a wide part sits over the middle of the row rather
+than to one side of it.
+
+The nasties are spread over all four walk rows rather than lined up along the
+bottom, and start at least `LevelData.ENEMY_MIN_DISTANCE` cells from the chef, so
+the opening of a level is spent working rather than dodging.
 
 ## Layout
 
 ```
-scripts/game/     level data, board grid, game flow, autoloads
+scripts/game/     level data, board grid, game flow, HUD, autoloads
 scripts/player/   the chef
-scripts/food/     ingredient definitions, falling items, salt
+scripts/food/     ingredient kinds, and the falling parts
 scripts/enemies/  roaming hazards
+scripts/items/    bonus pickups
+tools/            level generator, level checker, screenshots, visual checks
 tests/            headless test runner
 ```
 
+## Levels
+
+Three levels, 16x15 each, validated in tests: `LUNCH RUSH` (3 burgers),
+`DOUBLE SHIFT` (4) and `DINNER RUSH` (3). Each opens on a card naming the level
+and the job.
+
+The maps are generated by `tools/make_levels.gd` and pasted into
+`LevelData.LEVELS`, because a finished level should be readable in a diff rather
+than built at runtime:
+
+```sh
+godot --headless --script res://tools/make_levels.gd
+godot --headless res://tools/check_levels.tscn    # validate them
+```
+
+The generator refuses to emit a map that is wrong in the ways that are invisible
+on a 16x15 grid: a burger with more parts than there are ingredient storeys, or a
+nasty that would stand on an ingredient and silently shorten it.
+
+There is no level select yet, so the screenshot tool reaches levels 2 and 3 with a
+development hook: `godot scenes/game.tscn -- --level=1` starts that level
+directly (zero-based). The game ignores the argument unless it is given.
+
 ## Tests
 
-`tests/run_tests.gd` runs headless and covers level validation (row widths,
-legal characters, player-start support, ladder contiguity, and that every
-dispenser, table and salt pile is actually reachable), burger scoring and
-assembly rules, and integration paths: assembling a burger through the same
-calls the player makes, ingredients falling and being collected, taking items
-back off a counter, the tray limit, simulated walking and climbing, and
-building then tearing down every level in turn.
+`tests/run_tests.gd` runs headless and covers level validation and the shape
+every level has to keep, the board and landing rules, burger scoring and assembly,
+movement, jumps, ladders and falls, the pepper key, and integration paths through
+the same calls a player makes.
 
 Run it through `tests/run.sh` rather than invoking the scene directly. Two
 things make the obvious commands insufficient, and the script exists because
@@ -90,7 +147,7 @@ both bit during development:
   while `hud.gd` failed to parse, because the tests build `Game` directly and
   never load the scene's HUD.
 
-So `tests/run.sh` runs the suite and boots both scenes, judging each run by
+So `tests/run.sh` runs the suite and boots all four scenes, judging each run by
 scanning its output for script errors, parse failures and timeouts rather than
 trusting the exit status. CI runs the same script.
 
@@ -114,31 +171,19 @@ no framebuffer to read. That is the only reason Xvfb is here.
 
 `tools/visual_check.sh` then asserts things about those PNGs which are easy to
 regress without noticing: that the HUD actually draws, that the level card is
-present during the intro and gone once play starts, and that no two captures
-are accidentally the same picture. Run it after changing the HUD, the level
-card or level geometry. The checks are in `tools/visual_check.gd` and count
-pixels with `Image.get_pixel()`; it only reads files, so it runs headless.
-Thresholds are fractions of the image rather than pixel counts, so they hold at
-any capture size.
+present during the intro and gone once play starts, that each level draws a
+recognisable amount of geometry, and that no two captures are accidentally the
+same picture. The checks are in `tools/visual_check.gd` and count pixels with
+`Image.get_pixel()`; it only reads files, so it runs headless. Thresholds are
+fractions of the image rather than pixel counts, so they hold at any capture size.
 
 Three details earn their keep, all learned the hard way:
 
 - Rather than guessing a frame count, each shot waits for the scene's own
-  `phase` (`SHOT_UNTIL_PHASE`) and then reports the phase and clock it caught. A
-  capture of the wrong moment fails loudly instead of quietly writing a
-  plausible picture of the wrong thing, which is how a level-4 shot once came
-  back showing the title screen.
+  `phase` (`SHOT_UNTIL_PHASE`) and then reports the phase it caught. A capture of
+  the wrong moment fails loudly instead of quietly writing a plausible picture of
+  the wrong thing, which is how a level-4 shot once came back showing the title
+  screen.
 - One game process per shot, so nothing is left over from an earlier run.
 - `godot --headless tools/see.tscn -- <png> [cols]` prints a capture as ASCII. It
   is how you check a level looks like something without a display.
-
-There is no level select yet, so the screenshot tool reaches levels 2-4 with a
-development hook: `godot scenes/game.tscn -- --level=2` starts that level
-directly (zero-based). The game ignores the argument unless it is given.
-
-## Levels
-
-Four hand-built levels, 16x15 each, validated in tests: `LUNCH RUSH` (3 burgers,
-75s), `DOUBLE SHIFT` (5, 95s), `DINNER RUSH` (6, 110s) and `LATE SHIFT` (7,
-125s). Each level opens on a card naming the level and the job, and the clock
-does not start until the card clears.

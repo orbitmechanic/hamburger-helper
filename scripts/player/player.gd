@@ -73,6 +73,9 @@ func add_pepper(charges: int = 1) -> void:
 	pepper_left += charges
 
 
+## Throws a pepper dose. The caller is the game, on the pepper key: the chef
+## shimmers for PEPPER_TIME and the first nasty he touches in that window is
+## stunned, so spending a charge is always the player's decision.
 func use_pepper() -> bool:
 	if pepper_left <= 0:
 		return false

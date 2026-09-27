@@ -73,12 +73,8 @@ func _set_tile(cell: Vector2i, t: Tile) -> void:
 	_tiles[cell.y * Cfg.GRID_W + cell.x] = t
 
 
-func in_bounds(cell: Vector2i) -> bool:
-	return Cfg.GRID_RECT.has_point(cell)
-
-
 func tile_at(cell: Vector2i) -> Tile:
-	if not in_bounds(cell):
+	if not Cfg.in_grid(cell):
 		return Tile.WALL
 	return _tiles[cell.y * Cfg.GRID_W + cell.x] as Tile
 
@@ -102,7 +98,7 @@ func supports_actor(cell: Vector2i) -> bool:
 ## the food drops out from under him he falls.
 func floor_below(cell: Vector2i) -> bool:
 	var below := cell + Vector2i.DOWN
-	if not in_bounds(below):
+	if not Cfg.in_grid(below):
 		return false
 	return supports_actor(below) or _ingredients.has(below)
 
@@ -127,7 +123,7 @@ func ingredient_at(cell: Vector2i) -> Ingredient:
 ## end up half-placed on top of another.
 func claim(cells: Array[Vector2i], ing: Ingredient) -> bool:
 	for cell in cells:
-		if not in_bounds(cell) or _ingredients.has(cell):
+		if not Cfg.in_grid(cell) or _ingredients.has(cell):
 			return false
 		# A part is never allowed to sit inside geometry. This is the backstop
 		# behind landing_spot: if a scan ever says a part belongs somewhere it

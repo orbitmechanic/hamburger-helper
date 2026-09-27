@@ -59,7 +59,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	if _t < 1.5 and fmod(_t, 0.3) > 0.15:
+	if _t < 1.5 and fposmod(_t, 0.3) > 0.15:
 		return
 	var box := Rect2(-5, -6, 10, 12)
 	draw_rect(box.grow(1.0), Cfg.COL_OUTLINE)

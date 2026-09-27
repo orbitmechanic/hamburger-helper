@@ -48,6 +48,12 @@ const PLAYER_COOK_HAT := Color("ffffff")
 const PLAYER_COOK_PANTS := Color("3050a0")
 
 
+## Whether a cell is on the board. One place, because a bounds check is easy to
+## get subtly wrong and every subsystem needs one.
+static func in_grid(cell: Vector2i) -> bool:
+	return GRID_RECT.has_point(cell)
+
+
 ## Converts a grid cell to the pixel position of its centre.
 static func cell_to_pixel(cell: Vector2i) -> Vector2:
 	return Vector2(cell) * TILE + Vector2(TILE, TILE) * 0.5

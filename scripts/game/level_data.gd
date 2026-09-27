@@ -29,6 +29,11 @@ extends RefCounted
 ##   * A plate sits on the ground floor. The burger on it grows upward from the
 ##     plate, so the column above a plate must stay clear for as many layers as
 ##     that burger needs.
+##   * The ground storey is tall on purpose. Ledges are on rows 1/4/7/14, so rows
+##     8..12 are open floor above the plates on row 13, and a finished burger
+##     sits in that space without standing in any walkway. Putting a ledge on
+##     row 10 instead, as an earlier version did, capped every burger at two
+##     layers and made all three levels impossible to finish.
 ##   * Every ingredient must sit in some plate's column, or it can never reach a
 ##     plate and the level cannot be finished.
 
@@ -39,6 +44,10 @@ const LADDER_CHAR := "="
 const CHEF_CHAR := "@"
 const ENEMY_CHARS := "123"
 const SOLID_CHARS := "#H"
+
+## How far a nasty has to start from the chef, in cells, counted as the number of
+## steps between them on the grid rather than as a straight line.
+const ENEMY_MIN_DISTANCE := 8
 
 ## Map char to Food.Kind, for the ingredient runs.
 const INGREDIENT_KINDS := {
@@ -114,68 +123,72 @@ class Level:
 ##
 ## Generated once by tools/make_levels.gd and pasted here, because a level should
 ## be readable in a diff and editable by hand rather than built at runtime. The
-## shape of each is a stack of ledges on rows 1/4/7/10/14 with the walk rows above
-## them, plates along the ground, and a burger's parts stacked in one plate's
-## column - the plate collects them in the order they fall, which is the order
-## the recipe needs.
+## shape of each is three ingredient storeys on walk rows 0/3/6 over ledges on
+## rows 1/4/7, then a tall open ground storey on rows 8..13 above the ledge on
+## row 14, with the plates along the ground and a burger's parts stacked in one
+## plate's column - the plate collects them in the order they fall, which is the
+## order the recipe needs.
+##
+## The nasties are spread over all four walk rows rather than lined up along the
+## bottom, and start as far from the chef as the maze allows.
 const LEVELS: Array = [
 	{
 		"name": "LUNCH RUSH",
 		"map": [
-			"...........ttt..",
-			"####=####=######",
-			"....=....=......",
-			"......ttt..lll..",
-			"#####=########=#",
-			".....=........=.",
-			".ttt..lll..rrr..",
-			"####=#####=#####",
-			"....=.....=.....",
-			".mmm..mmm..mmm..",
-			"=#############=#",
-			"=.............=.",
-			"=.............=.",
-			"@OOO.1OOO2.OOO3.",
+			".ttt..ttt..ttt.1",
+			"####=#########=#",
+			"....=.........=.",
+			".lll..rrr2.lll..",
+			"#####=######=###",
+			".....=......=...",
+			".mmm3.mmm..mmm..",
+			"=#########=#####",
+			"=.........=.....",
+			"=.........=.....",
+			"=.........=.....",
+			"=.........=.....",
+			"=.........=.....",
+			"@OOO..OOO..OOO3.",
 			"################",
 		],
 	},
 	{
 		"name": "DOUBLE SHIFT",
 		"map": [
-			"............ttt.",
-			"####=#########=#",
-			"....=.........=.",
-			"...ttt.ttt..lll.",
-			"##=#######=#####",
-			"..=.......=.....",
-			"tt.lll.lll..rrr.",
-			"#####=#####=####",
-			".....=.....=....",
-			"mm.mmm.mmm..mmm.",
-			"######=########=",
-			"......=........=",
-			"......=........=",
-			"OO3OOO1OO.@.OOO2",
+			"....ttt..ttt1ttt",
+			"#####=########=#",
+			".....=........=.",
+			"ttt.lll.2rrr.lll",
+			"#######=#######=",
+			".......=.......=",
+			"mmm.mmm3.mmm.mmm",
+			"###=########=###",
+			"...=........=...",
+			"...=........=...",
+			"...=........=...",
+			"...=........=...",
+			"...=........=...",
+			"OOO@OOO..OOO1OOO",
 			"################",
 		],
 	},
 	{
 		"name": "DINNER RUSH",
 		"map": [
-			"...........ttt..",
-			"=########=######",
-			"=........=......",
-			"......ttt..lll..",
-			"#=########=#####",
-			".=........=.....",
-			"..ttt.lll..rrr..",
+			".ttt..ttt......3",
+			"#########=#####=",
+			".........=.....=",
+			".lll..rrr..ttt1.",
+			"=#########=#####",
+			"=.........=.....",
+			".mmm2.mmm..mmm..",
 			"#####=########=#",
 			".....=........=.",
-			"..mmm.mmm..mmm..",
-			"=########=######",
-			"=........=......",
-			"=........=......",
-			"@.OO1.OOO2.OOO3.",
+			".....=........=.",
+			".....=........=.",
+			".....=........=.",
+			".....=........=.",
+			"@OOO..OOO.3OOO..",
 			"################",
 		],
 	},
@@ -277,6 +290,7 @@ static func validate(lv: Level) -> PackedStringArray:
 		if not Food.stack_is_burger(recipe):
 			problems.append("plate at %s needs a stack that is not a burger: %s" % [
 				_plate_label(plate), _recipe_label(recipe)])
+		problems.append_array(_clearance_problems(lv, plate, recipe.size()))
 	for ing in lv.ingredients:
 		var home: Span = null
 		for plate in lv.plates:
@@ -294,6 +308,22 @@ static func validate(lv: Level) -> PackedStringArray:
 			problems.append("enemy at %s has no floor beneath it" % cell)
 	if not _has_char(lv, CHEF_CHAR) or not _supported(lv, lv.chef):
 		problems.append("chef start has no floor beneath it")
+
+	# Nasties all starting on the bottom floor turns the opening of a level into
+	# a walk along one row, and starting on top of the chef is just unfair. They
+	# have to be spread over the storeys and start well clear of him.
+	if _has_char(lv, CHEF_CHAR):
+		for cell in lv.enemies:
+			var away := absi(cell.x - lv.chef.x) + absi(cell.y - lv.chef.y)
+			if away < ENEMY_MIN_DISTANCE:
+				problems.append("enemy at %s starts only %d cells from the chef, minimum is %d"
+					% [cell, away, ENEMY_MIN_DISTANCE])
+		var rows := {}
+		for cell in lv.enemies:
+			rows[cell.y] = true
+		if lv.enemies.size() > 1 and rows.size() < 2:
+			problems.append("all %d enemies start on row %d: spread them over the storeys"
+				% [lv.enemies.size(), lv.enemies[0].y])
 
 	# Ladders are the only way between rows, so a run that does not join two
 	# standable rows is a trap rather than a shortcut.
@@ -324,11 +354,34 @@ static func validate(lv: Level) -> PackedStringArray:
 	return problems
 
 
+## Whether the map contains a character anywhere. The whole map is joined once
+## and asked with String.contains() rather than rescanned row by row, which also
+## gets the "row is shorter than expected" case for free because joining an
+## uneven map is still a valid string.
 static func _has_char(lv: Level, ch: String) -> bool:
-	for y in lv.map.size():
-		if y < lv.map[y].length() and lv.map[y].find(ch) != -1:
-			return true
-	return false
+	return "\n".join(lv.map).contains(ch)
+
+
+## Whether a plate's column has the room to grow a burger of `layers` parts.
+##
+## A burger on a plate grows upward, one row per layer, across the plate's whole
+## width, and a part cannot fall through a platform. So the rows a burger needs
+## must be open floor: if a ledge crosses the column, the burger stops growing
+## under it and every part above that row can never reach the plate, which leaves
+## a level that looks playable and can never be finished.
+static func _clearance_problems(lv: Level, plate: Span, layers: int) -> PackedStringArray:
+	var problems := PackedStringArray()
+	for layer in layers:
+		var row := plate.y - 1 - layer
+		if row < 0:
+			return problems
+		for i in plate.width:
+			var ch := _char_at(lv, Vector2i(plate.x + i, row))
+			if ch in SOLID_CHARS or ch == PLATE_CHAR:
+				problems.append(
+					"plate at %s has no room for a %d-part burger: row %d col %d is '%s'"
+					% [_plate_label(plate), layers, row, plate.x + i, ch])
+	return problems
 
 
 static func _plate_label(plate: Span) -> String:
@@ -373,13 +426,13 @@ static func _traversable(lv: Level, cell: Vector2i) -> bool:
 ## crossing one is what knocks it down, so an ingredient cell is walkable floor
 ## to him exactly as it is in Board.blocks_player().
 static func _passable(lv: Level, cell: Vector2i) -> bool:
-	if not Cfg.GRID_RECT.has_point(cell):
+	if not Cfg.in_grid(cell):
 		return false
 	return not SOLID_CHARS.contains(_char_at(lv, cell))
 
 
 static func _is_ladder(lv: Level, cell: Vector2i) -> bool:
-	if not Cfg.GRID_RECT.has_point(cell):
+	if not Cfg.in_grid(cell):
 		return false
 	return _char_at(lv, cell) == LADDER_CHAR
 
