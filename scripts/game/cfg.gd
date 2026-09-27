@@ -35,6 +35,9 @@ const COL_WALL := Color("4a4a6a")
 const COL_LADDER := Color("e8c070")
 const COL_TABLE := Color("d8d8e8")
 const COL_PLATE := Color("f4f4ff")
+## The level card panel. Partly transparent, so what lands in a capture is this
+## composited over COL_BG rather than this on its own.
+const COL_CARD := Color(0.04, 0.04, 0.09, 0.92)
 const COL_SALT := Color("ffffff")
 const COL_OUTLINE := Color("14141f")
 

@@ -96,33 +96,41 @@ trusting the exit status. CI runs the same script.
 
 ## Screenshots and visual checks
 
-`tools/shots.sh` renders the real game on a headless X server and saves PNGs of
-the title, the level card and each level to `/tmp/hamburger-helper`. It needs
-`Xvfb` and ImageMagick's `import`:
+`tools/shots.sh` renders the real game and saves PNGs of the title, the level
+card and each level to `/tmp/hamburger-helper`:
 
 ```sh
-sudo pacman -S xorg-server-xvfb imagemagick   # or your distro's equivalent
+sudo pacman -S xorg-server-xvfb          # or your distro's equivalent
 ./tools/shots.sh
 ```
+
+The PNGs come from `tools/screenshot.gd`, which saves Godot's own framebuffer
+(`get_viewport().get_texture().get_image().save_png()`), at the project's native
+256x240 so captures are 1:1 with the game. Nothing is scraped off an X window and
+no image library is involved.
+
+A display is still needed, because `--headless` gives Godot a dummy renderer with
+no framebuffer to read. That is the only reason Xvfb is here.
 
 `tools/visual_check.sh` then asserts things about those PNGs which are easy to
 regress without noticing: that the HUD actually draws, that the level card is
 present during the intro and gone once play starts, and that no two captures
 are accidentally the same picture. Run it after changing the HUD, the level
-card or level geometry.
+card or level geometry. The checks are in `tools/visual_check.gd` and count
+pixels with `Image.get_pixel()`; it only reads files, so it runs headless.
+Thresholds are fractions of the image rather than pixel counts, so they hold at
+any capture size.
 
-Two details earn their keep, both learned the hard way:
+Three details earn their keep, all learned the hard way:
 
-- The game is launched once per shot, and a shot that captures a window left
-  over from an earlier run produces a plausible picture of the wrong thing.
-  `shots.sh` kills any previous game and refuses to capture if the process it
-  launched is not still alive.
-- `tools/see.py <png>` prints a capture as ASCII. It is how you check a level
-  looks like something without a display.
-
-`tools/screenshot.gd` is a separate root-viewport capture helper for when a
-scene needs to be photographed without a window manager. `shots.sh` does not
-use it; it drives the shipped scene instead.
+- Rather than guessing a frame count, each shot waits for the scene's own
+  `phase` (`SHOT_UNTIL_PHASE`) and then reports the phase and clock it caught. A
+  capture of the wrong moment fails loudly instead of quietly writing a
+  plausible picture of the wrong thing, which is how a level-4 shot once came
+  back showing the title screen.
+- One game process per shot, so nothing is left over from an earlier run.
+- `godot --headless tools/see.tscn -- <png> [cols]` prints a capture as ASCII. It
+  is how you check a level looks like something without a display.
 
 There is no level select yet, so the screenshot tool reaches levels 2-4 with a
 development hook: `godot scenes/game.tscn -- --level=2` starts that level
