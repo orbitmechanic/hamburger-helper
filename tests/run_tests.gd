@@ -34,6 +34,7 @@ func _run() -> void:
 	await _test_walking()
 	await _test_climbing()
 	await _test_tray_capacity()
+	await _test_respawn_grace()
 	await _test_every_level_starts()
 	await _test_level_intro()
 	await _test_full_run_reaches_the_win_screen()
@@ -45,6 +46,48 @@ func _run() -> void:
 	else:
 		print_rich("[color=red]FAIL[/color]  %d passed, %d failed" % [_passed, _failed])
 		get_tree().quit(1)
+
+
+## A chef that respawns onto the pad where it just died must get a moment of
+## invulnerability, otherwise an idle chef loses the whole run in a few seconds.
+## Uses the harness, which has no enemies, so nothing else can land a hit.
+func _test_respawn_grace() -> void:
+	_begin("respawn grace")
+	var harness := _Harness.new(self)
+	await harness.setup(0)
+	var player := harness.player
+	var lives := GameState.lives
+
+	check(player.hit(), "the first hit lands")
+	check(GameState.lives == lives - 1, "the first hit cost a life")
+
+	player._dead_t = 0.0
+	await harness.frame()
+	check(player.cell == player.board.player_spawn,
+		"the chef is back on the spawn pad")
+	check(player.state == Player.St.NORMAL, "the chef is not left dead")
+
+	check(not player.hit(), "a hit is refused during the grace window")
+	check(GameState.lives == lives - 1,
+		"the refused hit cost no life",
+		"lives %d, expected %d" % [GameState.lives, lives - 1])
+
+	# Let the grace run out, then the same hit should connect again.
+	player._grace_t = 0.0
+	check(player.hit(), "a hit lands once the grace window is over")
+	check(GameState.lives == lives - 2, "the later hit costs a life")
+
+	# The window must actually close on its own, not just when forced shut.
+	player._dead_t = 0.0
+	await harness.frame()
+	check(player._grace_t > 0.0, "respawning arms the grace window again")
+	var guard := 0
+	while player._grace_t > 0.0 and guard < 600:
+		await harness.frame()
+		guard += 1
+	check(player._grace_t == 0.0, "the grace window closes on its own",
+		"still %f after %d frames" % [player._grace_t, guard])
+	harness.teardown()
 
 
 # --- Integration tests ------------------------------------------------------
@@ -288,7 +331,9 @@ func _test_tray_capacity() -> void:
 ## detached kept running against the next one.
 func _test_every_level_starts() -> void:
 	_begin("level progression")
-	var game := Game.new()
+	# The real scene, not Game.new(). The bug this covers only exists when the
+	# scene's own children are present, so a bare Game.new() can never see it.
+	var game := _instantiate_game()
 	add_child(game)
 	var total := LevelData.count()
 	for i in total:
@@ -308,9 +353,27 @@ func _test_every_level_starts() -> void:
 			"no counters on %s" % lv.name)
 		check(not game.board.blocks_player(game.board.player_spawn),
 			"level %d starts the chef on clear floor" % (i + 1))
+		# Teardown must not take the scene's own nodes with it. It did: clearing
+		# every child of Game also destroyed the HUD, so the score, the clock and
+		# the level card have never been drawn at all.
+		# Deliberately unguarded. The guard that used to be here was
+		# "if game.actors != null", and a freed Object compares equal to null in
+		# GDScript, so the check was skipped in precisely the case it existed to
+		# catch: teardown that frees the actor container takes the HUD with it.
+		var scene_hud = game.get_node_or_null("HudLayer/Hud")
+		check(scene_hud != null and is_instance_valid(scene_hud),
+			"level %d leaves the HUD alone" % (i + 1),
+			"the HUD was destroyed by the previous start_level")
+		check(game.get_node_or_null("Actors") != null and is_instance_valid(game.get_node_or_null("Actors")),
+			"level %d leaves the actor container alone" % (i + 1),
+			"the container was destroyed by the previous start_level")
+		check(game.hud == scene_hud, "level %d still has its HUD wired up" % (i + 1))
+		check(game.get_child_count() == 2,
+			"level %d keeps the scene's own two children" % (i + 1),
+			"%d children: %s" % [game.get_child_count(), str(game.get_children())])
 		# The previous level's nodes must be gone, not merely pending deletion.
 		var live := 0
-		for child in game.get_children():
+		for child in game._actor_parent().get_children():
 			if child is Board or child is Player or child is Enemy:
 				live += 1
 		var expected := 1 + 1 + game.board.enemy_kinds.size()
@@ -363,7 +426,7 @@ func _test_level_intro() -> void:
 ## itself to the win screen rather than stalling in a phase.
 func _test_full_run_reaches_the_win_screen() -> void:
 	_begin("full run")
-	var game := Game.new()
+	var game := _instantiate_game()
 	add_child(game)
 	GameState.reset_run()
 
@@ -436,6 +499,20 @@ func _assemble(game: Game) -> void:
 		game.player.tray.append(kind)
 		game.player._place_one()
 		game.player.tray.clear()
+
+
+## The real game scene, loaded from disk. Anything checking the scene's own
+## node structure has to go through this: Game.new() has no Hud, no Actors and
+## no HudLayer, and will happily pass a test the shipped scene fails.
+func _instantiate_game() -> Game:
+	var packed: PackedScene = load("res://scenes/game.tscn")
+	if packed == null:
+		push_error("could not load res://scenes/game.tscn")
+		return Game.new()
+	var inst := packed.instantiate()
+	# The win screen changes scene to the title, which is not present under a
+	# bare test, so stop short of it.
+	return inst
 
 
 func harness_frames(count: int) -> void:

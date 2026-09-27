@@ -23,6 +23,10 @@ const SALT := -1
 const DASH_STEPS := 7
 ## Seconds of invulnerability after being hit.
 const HURT_TIME := 1.6
+## Seconds after respawning during which the chef cannot be caught again.
+## The spawn pad is where the chef died, so without this the enemy that landed
+## the hit is still standing there and the run ends without any input at all.
+const GRACE_TIME := 1.2
 ## Seconds the death animation holds before respawning.
 const DEAD_TIME := 0.9
 ## Minimum gap between two items from the same dispenser.
@@ -37,6 +41,7 @@ var _dash_left := 0
 var _disp_cd := 0.0
 var _hurt_t := 0.0
 var _dead_t := 0.0
+var _grace_t := 0.0
 var _anim_t := 0.0
 var _steer_used := 0
 
@@ -48,6 +53,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_anim_t += delta
 	_disp_cd = maxf(0.0, _disp_cd - delta)
+	_grace_t = maxf(0.0, _grace_t - delta)
 
 	if state == St.DEAD:
 		_dead_t -= delta
@@ -75,6 +81,7 @@ func _process(delta: float) -> void:
 func respawn() -> void:
 	place(board.player_spawn)
 	state = St.NORMAL
+	_grace_t = GRACE_TIME
 	_dash_left = 0
 	_steer_used = 0
 	tray.clear()
@@ -84,7 +91,7 @@ func respawn() -> void:
 
 ## Called when an enemy catches the chef. Returns true if it actually landed.
 func hit() -> bool:
-	if state == St.HURT or state == St.DEAD:
+	if state == St.HURT or state == St.DEAD or _grace_t > 0.0:
 		return false
 	GameState.lose_life()
 	_drop_tray()
@@ -334,7 +341,8 @@ func _draw() -> void:
 	if state == St.DEAD:
 		_draw_dead()
 		return
-	if state == St.HURT and fmod(_anim_t, 0.2) < 0.1:
+	# Blink while invulnerable, whether that is the hurt stun or respawn grace.
+	if (state == St.HURT or _grace_t > 0.0) and fmod(_anim_t, 0.2) < 0.1:
 		return
 
 	_draw_tray()

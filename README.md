@@ -94,6 +94,40 @@ So `tests/run.sh` runs the suite and boots both scenes, judging each run by
 scanning its output for script errors, parse failures and timeouts rather than
 trusting the exit status. CI runs the same script.
 
+## Screenshots and visual checks
+
+`tools/shots.sh` renders the real game on a headless X server and saves PNGs of
+the title, the level card and each level to `/tmp/hamburger-helper`. It needs
+`Xvfb` and ImageMagick's `import`:
+
+```sh
+sudo pacman -S xorg-server-xvfb imagemagick   # or your distro's equivalent
+./tools/shots.sh
+```
+
+`tools/visual_check.sh` then asserts things about those PNGs which are easy to
+regress without noticing: that the HUD actually draws, that the level card is
+present during the intro and gone once play starts, and that no two captures
+are accidentally the same picture. Run it after changing the HUD, the level
+card or level geometry.
+
+Two details earn their keep, both learned the hard way:
+
+- The game is launched once per shot, and a shot that captures a window left
+  over from an earlier run produces a plausible picture of the wrong thing.
+  `shots.sh` kills any previous game and refuses to capture if the process it
+  launched is not still alive.
+- `tools/see.py <png>` prints a capture as ASCII. It is how you check a level
+  looks like something without a display.
+
+`tools/screenshot.gd` is a separate root-viewport capture helper for when a
+scene needs to be photographed without a window manager. `shots.sh` does not
+use it; it drives the shipped scene instead.
+
+There is no level select yet, so the screenshot tool reaches levels 2-4 with a
+development hook: `godot scenes/game.tscn -- --level=2` starts that level
+directly (zero-based). The game ignores the argument unless it is given.
+
 ## Levels
 
 Four hand-built levels, 16x15 each, validated in tests: `LUNCH RUSH` (3 burgers,

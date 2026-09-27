@@ -11,6 +11,9 @@ const PHASE_TIME := 2.6
 var board: Board
 var player: Player
 var hud: Control
+## Container for the board, chef, ingredients and enemies. Level teardown
+## clears this and nothing else.
+var actors: Node2D
 var phase: Phase = Phase.PLAYING
 var level: LevelData.Level
 var paused := false
@@ -20,10 +23,24 @@ var _popups: Array = []
 
 
 func _ready() -> void:
+	actors = get_node_or_null("Actors")
 	hud = get_node_or_null("HudLayer/Hud")
 	if hud != null:
 		hud.game = self
-	start_level(GameState.level_index)
+	start_level(_requested_level())
+
+
+## Development hook: `godot scenes/game.tscn -- --level=2` jumps straight to a
+## level. There is no level select yet, so this is the only way to look at
+## anything past the first one, which is what tools/shots.sh needs.
+## Ignored unless the argument is given.
+func _requested_level() -> int:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--level="):
+			var wanted := int(arg.substr(8))
+			if wanted >= 0 and wanted < LevelData.count():
+				return wanted
+	return GameState.level_index
 
 
 func start_level(index: int) -> void:
@@ -32,12 +49,12 @@ func start_level(index: int) -> void:
 	GameState.set_level(index, level.target, level.seconds)
 
 	board = Board.new()
-	add_child(board)
+	_actor_parent().add_child(board)
 	board.setup(level)
 
 	player = Player.new()
 	player.board = board
-	add_child(player)
+	_actor_parent().add_child(player)
 	player.place(board.player_spawn)
 	player.want_ingredient.connect(_on_want_ingredient)
 	player.want_salt.connect(_on_want_salt)
@@ -55,6 +72,15 @@ func start_level(index: int) -> void:
 		hud.queue_redraw()
 
 
+## Where actors go. A dedicated container rather than the Game node itself,
+## because clearing "all children" also removed the scene's own HUD: the level
+## card, the score and the clock were destroyed by the first start_level and
+## have never been visible since. Falls back to self, since the tests build a
+## bare Game.new() with no scene and no container.
+func _actor_parent() -> Node:
+	return actors if actors != null else self
+
+
 func _clear_actors() -> void:
 	# Null the references first: a node freed at the end of the frame can still
 	# run one more _process, and the old actors must not touch the new level.
@@ -63,8 +89,9 @@ func _clear_actors() -> void:
 	_popups.clear()
 	# Detach before queue_free, otherwise the outgoing level keeps processing
 	# and drawing for another frame and appears as a ghost behind the new one.
-	for child in get_children():
-		remove_child(child)
+	var parent := _actor_parent()
+	for child in parent.get_children():
+		parent.remove_child(child)
 		child.queue_free()
 
 
@@ -72,7 +99,7 @@ func _spawn_enemies() -> void:
 	for cell in board.enemy_kinds:
 		var kind: Enemy.Kind = board.enemy_kinds[cell]
 		var enemy := Enemy.new()
-		add_child(enemy)
+		_actor_parent().add_child(enemy)
 		enemy.setup(board, cell, kind, player)
 		enemy.add_to_group(&"enemies")
 		enemy.caught_player.connect(_on_enemy_caught)
@@ -83,13 +110,13 @@ func _spawn_enemies() -> void:
 
 func _on_want_ingredient(cell: Vector2i, kind: Food.Kind) -> void:
 	var ing := Ingredient.new()
-	add_child(ing)
+	_actor_parent().add_child(ing)
 	ing.setup(board, cell, kind)
 
 
 func _on_want_salt(cell: Vector2i, facing: int) -> void:
 	var packet := Salt.new()
-	add_child(packet)
+	_actor_parent().add_child(packet)
 	packet.setup(board, cell, facing, player)
 	packet.add_to_group(&"salt")
 
