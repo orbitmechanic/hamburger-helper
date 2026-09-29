@@ -23,6 +23,15 @@ const STEP_DASH := 0.055
 const STEP_CLIMB := 0.11
 const STEP_FALL := 0.075
 
+## How tall one layer of a burger on a plate is drawn, in pixels.
+##
+## Half a cell. A finished stack is as much decoration as state, and at full
+## height four layers filled the whole ground storey and stood in the walkway
+## above it. At half height the same burger is two cells tall and tucked under
+## the ledge. Only the drawing changes: a part still lands on a plate by joining
+## the stack, so no collision moves.
+const BURGER_LAYER_H := TILE / 2
+
 ## Seconds the level card holds before the chef takes over.
 const INTRO_TIME := 2.4
 

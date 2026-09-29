@@ -28,6 +28,12 @@ const SHOT_DIR_DEFAULT := "/tmp/hamburger-helper"
 ## panel, and the platform tan. Chosen from Cfg, not hardcoded twice.
 const HUD_TEXT := Cfg.COL_PLATE
 const PLATFORM := Cfg.COL_PLATFORM
+## The chef's shirt. The characters are the only things on screen drawn out of a
+## texture rather than a flat rect, so they are the only thing that can go missing
+## without a colour count noticing: a sheet that failed to load would leave an
+## empty cell and the level would still be "drawn".
+const CHEF_SHIRT := Cfg.PLAYER_COOK_SHIRT
+const CHEF_PANTS := Cfg.PLAYER_COOK_PANTS
 ## Smallest share of the image each thing may cover. The HUD and the card panel
 ## are set from what the real captures draw, with roughly half again as much
 ## margin as the thinnest one. The level share is deliberately not set that way:
@@ -38,6 +44,15 @@ const PLATFORM := Cfg.COL_PLATFORM
 const MIN_HUD_SHARE := 0.0015
 const MIN_CARD_SHARE := 0.05
 const MIN_LEVEL_SHARE := 0.12
+## The chef is 14 by 18 pixels in a 256x240 frame, so about 0.4% of it, and his
+## shirt is most of that. The floor sits under the measured share so a frame caught
+## mid-stride, or facing the other way, still passes.
+const MIN_CHEF_SHARE := 0.0015
+## The trousers are four rows of four pixels per leg, and a walk frame has one leg
+## in the air, so this is low on purpose: the check is there to catch legs that are
+## not drawn at all, which is a real way for the sheet to be wrong, and not to pin
+## down how much trouser there is.
+const MIN_CHEF_LEGS_SHARE := 0.0002
 
 ## How far a channel may drift and still count. Godot's own capture path and the
 ## X11 one that preceded it can land on adjacent values around a flat fill.
@@ -80,6 +95,13 @@ func _run() -> void:
 	var card := _over(Cfg.COL_CARD, Cfg.COL_BG)
 	_check_share("level card is drawn", "02-level1-card", card, MIN_CARD_SHARE)
 	_check_share("level card is cleared for play", "03-level1-play", card, 0.0)
+
+	# The chef is on the board in every play capture, and is drawn out of his sheet
+	# rather than with flat rects. A sheet that is missing, mislaid or the wrong
+	# size leaves him invisible, which no other check here would see.
+	for shot in ["03-level1-play", "04-level2-play", "05-level3-play"]:
+		_check_share("%s draws the chef" % shot, shot, CHEF_SHIRT, MIN_CHEF_SHARE)
+		_check_share("%s draws his trousers" % shot, shot, CHEF_PANTS, MIN_CHEF_LEGS_SHARE)
 
 	# A frame that is only background means the level failed to build or draw.
 	for shot in ["03-level1-play", "04-level2-play", "05-level3-play"]:

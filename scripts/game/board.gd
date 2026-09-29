@@ -277,12 +277,25 @@ func _draw_burger(plate: LevelData.Span) -> void:
 	draw_rect(plate_rect, Cfg.COL_PLATE)
 	draw_rect(Rect2(plate_rect.position, Vector2(plate_rect.size.x, 2)), Cfg.COL_PLATE.darkened(0.25))
 
-	var pile := stack(plate.x)
 	# Bottom-to-top, so the first entry draws lowest and the lid ends up on top.
+	var pile := stack(plate.x)
 	for i in pile.size():
 		var kind: int = pile[i]
-		var y := plate.y - 1 - i
-		var r := Rect2(Vector2(plate.x, y) * T, Vector2(plate.width * T, T))
+		var r := burger_layer(plate, i)
 		draw_rect(r, Food.color_of(kind))
-		draw_rect(Rect2(r.position, Vector2(r.size.x, 4)), Food.accent_of(kind))
+		draw_rect(Rect2(r.position, Vector2(r.size.x, 2)), Food.accent_of(kind))
 		draw_rect(r, Cfg.COL_OUTLINE, false, 1.0)
+
+
+## Where one layer of a plate's burger is drawn, counting up from the bottom.
+##
+## Layers are half a cell tall and are measured up from the top of the plate
+## rather than taking a cell each. That is the point: a burger is as much
+## decoration as it is state, and at a cell per layer a four-layer burger reached
+## four rows up into the floor the chef and the nasties walk on. Only the drawing
+## changed - a part still lands by joining the logical stack, and where it stops
+## has not moved - so nothing about the game got easier or harder.
+func burger_layer(plate: LevelData.Span, index: int) -> Rect2:
+	return Rect2(
+		Vector2(plate.x * T, float(plate.y * T) - float(index + 1) * Cfg.BURGER_LAYER_H),
+		Vector2(plate.width * T, Cfg.BURGER_LAYER_H))

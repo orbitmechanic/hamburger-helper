@@ -100,9 +100,62 @@ scripts/player/   the chef
 scripts/food/     ingredient kinds, and the falling parts
 scripts/enemies/  roaming hazards
 scripts/items/    bonus pickups
-tools/            level generator, level checker, screenshots, visual checks
+assets/sheets/    one animation sheet per character, generated
+tools/            level and sheet generators, level checker, screenshots, visual checks
 tests/            headless test runner
 ```
+
+## Characters
+
+The chef and the three nasties are drawn from one PNG each in `assets/sheets/`,
+blitted a frame at a time. The game holds no character art code at all, so
+replacing a character is replacing a file: drop a `chef.png` in that follows the
+layout below and nothing else has to change.
+
+The layout is a contract, written down once in `scripts/game/sheet.gd` and read by
+both the game and the generator. There is no single industry-standard sheet
+format - "standard" here means the conventions a uniform grid slice implies, which
+is also how Unity and Godot slice a sheet by default:
+
+- Every sheet is a whole number of identical cells, `16x24`. No packing, no
+  trimmed variants, no rotation.
+- One animation per row, in a fixed order, frames left to right.
+- **Every** character's sheet uses the identical layout, so any sheet can replace
+  any other. Rows shorter than the column count are padded with empty cells rather
+  than cropped, so every row starts at the same place on every sheet.
+- The anchor is the bottom centre of the cell, so feet stay on the baseline between
+  frames and a walk does not look like a bounce. A cell is taller than a grid cell
+  because the chef's hat is taller than one cell.
+
+| Row | Animation | Frames | Used by |
+|-----|-----------|--------|---------|
+| 0 | `IDLE`    | 2 | the chef, breathing while he waits |
+| 1 | `WALK`    | 4 | everyone; played off the step, one cycle per cell |
+| 2 | `CLIMB`   | 4 | everyone |
+| 3 | `JUMP`    | 2 | everyone; also fall and ride |
+| 4 | `SQUASH`  | 1 | a nasty that has been flattened |
+| 5 | `STUN`    | 1 | a stung nasty, X eyes |
+
+A sheet is therefore `64x144`. The chef's art faces right and the game mirrors it
+by scaling, so there is one set of eyes to keep in step with the walk rather than
+two that can disagree. A nasty's body colour is baked into its sheet instead of
+being tinted on at draw time, which is what lets a sheet be replaced with
+deliberately different-looking art.
+
+The art itself is `tools/char_art.gd`, which paints into an `Image` with
+`fill_rect` - no viewport and no framebuffer, so it runs headless and its output is
+reproducible:
+
+```sh
+godot --headless --script res://tools/make_sheets.gd
+godot --headless --import          # required: the sheets are committed as PNGs
+```
+
+Both steps are needed. The PNGs are committed because they are inputs to the game,
+not build scratch - a fresh checkout has to give a game that runs - and the import
+is what refreshes Godot's copy. The suite compares every committed sheet against
+what `char_art.gd` paints, pixel for pixel, so a regenerated sheet that was not
+re-imported, or a PNG edited by hand, fails instead of quietly drifting.
 
 ## Levels
 

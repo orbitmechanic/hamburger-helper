@@ -88,4 +88,7 @@ Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device"
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
+; Everything is drawn at whole pixels, so sampling has to snap. Default is linear,
+; which blurs the character sheets and the pixel art tiles it now blits.
+textures/canvas_textures/default_texture_filter=0
 environment/defaults/default_clear_color=Color(0.09, 0.09, 0.18, 1)

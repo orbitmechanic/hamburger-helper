@@ -14,7 +14,14 @@ signal returned_to_play
 enum Kind { HOTDOG, EGG, PICKLE }
 enum St { WALK, CLIMB, FALL, RIDE, STUN, SQUASH }
 
-const STEP := 0.22
+## Seconds per cell for a nasty: half the pace it had, and a third of the chef's.
+## A nasty you cannot walk away from turns a level into a waiting game, and waiting
+## is the one thing this has to be about avoiding. Climbing is slowed to match, or
+## a nasty would be quick on a ladder and slow on the floor, which reads as two
+## different characters. Falling is left alone, because a part of the point of a
+## fall is that it is quick.
+const STEP := 0.44
+const STEP_CLIMB := Cfg.STEP_CLIMB * 2.0
 const STEP_FALL := 0.07
 ## Chance per step of turning around, so packs do not march in lockstep.
 const TURN_CHANCE := 0.04
@@ -207,7 +214,7 @@ func _climb_toward(target_row: int) -> void:
 		_patrol()
 		return
 	state = St.CLIMB
-	begin_step(cell + dir, Cfg.STEP_CLIMB)
+	begin_step(cell + dir, STEP_CLIMB)
 
 
 ## Nearest column that has a rung on the correct side of this row.
@@ -311,43 +318,53 @@ func reset_for_respawn() -> void:
 
 
 func _draw() -> void:
-	if state == St.SQUASH:
-		# Flattened: a wide, short smear where the nasty was.
-		draw_rect(Rect2(-7, -3, 14, 5), Cfg.COL_OUTLINE)
-		draw_rect(Rect2(-6, -2, 12, 3), body_color())
+	var sheet := Sheet.texture(sheet_name())
+	if sheet == null:
 		queue_redraw()
 		return
-
-	var lift := 0
-	if state == St.RIDE:
-		lift = -2
+	var anim := anim_state()
+	# A nasty being carried rides up on the part it is standing on, which is a
+	# couple of pixels above the cell it is held in.
+	var lift := -2 if state == St.RIDE else 0
 	draw_set_transform(Vector2(lift, 0), 0.0, Vector2(facing, 1.0))
-	draw_rect(Rect2(-6, -5, 12, 10).grow(1.0), Cfg.COL_OUTLINE)
-	draw_rect(Rect2(-5, -4, 10, 8), body_color())
-	draw_rect(Rect2(-5, -4, 10, 2), body_color().lightened(0.25))
-	# Feet, alternating as it walks.
-	var swing := 0
-	if moving and state != St.CLIMB:
-		swing = 1 if sin(_anim * 12.0) > 0.0 else 0
-	draw_rect(Rect2(-5, 3, 3, 3), Cfg.COL_OUTLINE)
-	draw_rect(Rect2(2, 3, 3, 3), Cfg.COL_OUTLINE)
-	draw_rect(Rect2(-5, 3, 3, 3 * swing), Cfg.COL_OUTLINE.lightened(0.5))
-	# Eyes, and a stunned X.
-	if state == St.STUN:
-		draw_rect(Rect2(-4, -3, 2, 2), Cfg.COL_OUTLINE)
-		draw_rect(Rect2(2, -3, 2, 2), Cfg.COL_OUTLINE)
-	else:
-		draw_rect(Rect2(-4, -3, 2, 2), Cfg.COL_PEPPER)
-		draw_rect(Rect2(2, -3, 2, 2), Cfg.COL_PEPPER)
+	draw_texture_rect_region(sheet, Rect2(Sheet.offset(), Vector2(Sheet.CELL)),
+			Sheet.region(anim, anim_frame(anim)))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	queue_redraw()
 
 
-func body_color() -> Color:
+## Which sheet this nasty draws from. One sheet per character, so this is the only
+## thing that tells the three of them apart at draw time - the body colour is baked
+## into the art rather than tinted on, which is what lets a sheet be replaced
+## wholesale with different-looking art.
+func sheet_name() -> String:
 	match kind:
-		Kind.PICKLE:
-			return Color("3f8f3a")
 		Kind.EGG:
-			return Color("f2e4b8")
+			return Sheet.EGG
+		Kind.PICKLE:
+			return Sheet.PICKLE
 		_:
-			return Color("c8503a")
+			return Sheet.HOTDOG
+
+
+## Which animation the nasty is in.
+func anim_state() -> int:
+	match state:
+		St.SQUASH:
+			return Sheet.Anim.SQUASH
+		St.STUN:
+			return Sheet.Anim.STUN
+		St.CLIMB:
+			return Sheet.Anim.CLIMB
+		St.FALL, St.RIDE:
+			return Sheet.Anim.JUMP
+		_:
+			return Sheet.Anim.WALK
+
+
+## Frame within the current animation. The walk is played off the step so the feet
+## do not slide, since a nasty walks one cell at a time like everything else.
+func anim_frame(anim: int) -> int:
+	if anim == Sheet.Anim.WALK and moving:
+		return Sheet.frame_at_phase(anim, step_phase())
+	return Sheet.frame_of(anim, _anim)

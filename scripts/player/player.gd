@@ -29,6 +29,9 @@ var pepper_time := 0.0
 ## covered. A part is only pushed when every one of them has been.
 var _cross: Ingredient = null
 var _covered := {}
+## Free-running clock for the animations that are not tied to a step, so standing
+## still still breathes.
+var _anim := 0.0
 
 
 func setup(p_board: Board, start: Vector2i) -> void:
@@ -52,6 +55,7 @@ func place(at: Vector2i) -> void:
 
 
 func _process(delta: float) -> void:
+	_anim += delta
 	if pepper_time > 0.0:
 		pepper_time = maxf(pepper_time - delta, 0.0)
 	_drive()
@@ -204,31 +208,43 @@ func _close_crossing() -> void:
 
 
 func _draw() -> void:
-	var bob := 0
-	if moving and state != St.JUMP:
-		bob = -1 if sin(step_phase() * PI) > 0.0 else 0
-	var climbing := state == St.CLIMB
-	if climbing:
-		facing = 0
-
-	# Legs, then torso, then head and hat. Drawn from the feet up so the jump
-	# arc reads as a hop rather than a resize.
-	draw_rect(Rect2(-5, 2 + bob, 4, 6), Cfg.PLAYER_COOK_PANTS)
-	draw_rect(Rect2(1, 2 + bob, 4, 6), Cfg.PLAYER_COOK_PANTS)
-	draw_rect(Rect2(-6, -1 + bob, 12, 5), Cfg.PLAYER_COOK_SHIRT)
-	draw_rect(Rect2(-5, 4 + bob, 10, 2), Cfg.COL_OUTLINE)
-	draw_rect(Rect2(-4, -6 + bob, 8, 6), Cfg.PLAYER_COOK_SKIN)
-	# Chef's hat: a band and a puff on top.
-	draw_rect(Rect2(-5, -7 + bob, 10, 3), Cfg.PLAYER_COOK_HAT)
-	draw_rect(Rect2(-6, -10 + bob, 12, 4), Cfg.PLAYER_COOK_HAT)
-	draw_rect(Rect2(-6, -10 + bob, 12, 4), Cfg.COL_OUTLINE, false, 1.0)
-	# Eyes, which only show when he is facing a direction.
-	if facing != 0:
-		var ex := 2 * signi(facing)
-		draw_rect(Rect2(ex - 1, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
-		draw_rect(Rect2(ex + 1, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
-
+	draw_chef()
 	# A pepper dose shows as a shimmer, so a ghosted chef is never a mystery.
 	if ghost():
-		draw_rect(Rect2(-7, -11 + bob, 14, 14), Cfg.COL_PEPPER, false, 1.0)
+		draw_rect(Rect2(-7, -11, 14, 14), Cfg.COL_PEPPER, false, 1.0)
 	queue_redraw()
+
+
+## Blits the current frame of the chef's sheet, mirrored to face the way he is
+## going. The sheet only ever holds a right-facing chef, so there is one set of
+## eyes to keep in step with the walk rather than two that can disagree.
+func draw_chef() -> void:
+	var anim := anim_state()
+	var sheet := Sheet.texture(Sheet.CHEF)
+	if sheet == null:
+		return
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2(facing, 1.0))
+	draw_texture_rect_region(sheet, Rect2(Sheet.offset(), Vector2(Sheet.CELL)),
+			Sheet.region(anim, anim_frame(anim)))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Which animation the chef is in. Climbing is its own animation with no eyes in
+## it, which is why the old code no longer has to fake a facing of zero here -
+## and why `facing` is left alone, since movement reads it too.
+func anim_state() -> int:
+	match state:
+		St.CLIMB:
+			return Sheet.Anim.CLIMB
+		St.JUMP, St.FALL:
+			return Sheet.Anim.JUMP
+		_:
+			return Sheet.Anim.WALK if moving else Sheet.Anim.IDLE
+
+
+## Frame within the current animation. Walking and climbing are played off the
+## step so the feet keep pace with the movement; the rest run on the clock.
+func anim_frame(anim: int) -> int:
+	if anim == Sheet.Anim.WALK or anim == Sheet.Anim.CLIMB:
+		return Sheet.frame_at_phase(anim, step_phase())
+	return Sheet.frame_of(anim, _anim)

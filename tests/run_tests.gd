@@ -34,7 +34,10 @@ func _run() -> void:
 	_test_ingredient_columns_line_up()
 	_test_burgers_have_room()
 	_test_enemies_are_spread_out()
+	_test_nasties_are_slow()
 	_test_burger_order()
+	_test_burgers_are_half_height()
+	_test_sheets()
 	_test_burger_scoring()
 	await _test_board_tiles()
 	await _test_landing_spot()
@@ -782,6 +785,288 @@ func _test_pepper_stuns_a_nasty() -> void:
 	enemy.stun(3.0)
 	check(enemy.state == Enemy.St.STUN, "a stung nasty stops")
 	h.teardown()
+
+
+func _test_nasties_are_slow() -> void:
+	_begin("a nasty is half the pace it was")
+	# Measured rather than asserted against the constant, so this is what a player
+	# would feel: a nasty must spend at least two cells' worth of time on every
+	# cell the chef covers in one. Anything faster turns a chase into a formality.
+	check(Enemy.STEP >= Cfg.STEP_WALK * 2.0,
+		"a nasty takes at least twice as long per cell as the chef",
+		"nasty %ss vs chef %ss" % [Enemy.STEP, Cfg.STEP_WALK])
+	# Climbing matched, or a nasty would be quick going up a ladder and slow on the
+	# floor, which reads as two different speeds for one character.
+	check(Enemy.STEP_CLIMB >= Cfg.STEP_CLIMB * 2.0,
+		"and at least twice as long climbing",
+		"nasty %ss vs chef %ss" % [Enemy.STEP_CLIMB, Cfg.STEP_CLIMB])
+
+	# Now time a real one moving down a corridor.
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	if h.board == null:
+		return
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(h.board, Vector2i(8, 13), Enemy.Kind.PICKLE, h.player)
+	var steps := 0
+	enemy.step_finished.connect(func() -> void: steps += 1)
+	await h.until(func() -> bool: return enemy.moving, 2.0)
+	var clock := 0.0
+	var seen := 0
+	var last := enemy.cell.x
+	while clock < 1.2:
+		await h.frame()
+		clock += get_process_delta_time()
+		if enemy.cell.x != last:
+			last = enemy.cell.x
+			seen += 1
+	var per_cell := clock / maxf(seen, 1)
+	check(per_cell >= Cfg.STEP_WALK * 2.0,
+		"a nasty covering ground takes at least twice as long as the chef per cell",
+		"%.3fs per cell" % per_cell)
+	h.teardown()
+
+
+## A finished burger is drawn at half height, and only the drawing.
+##
+## At a cell per layer a four-layer burger stood four rows up in the floor the
+## chef and the nasties walk on, in the middle of a storey. Half height puts the
+## same burger in two rows. The risk in that change is the stack and the drawing
+## drifting apart, so this checks the drawn rectangles against the shipped levels
+## and then checks the logical stack is still one layer per cell.
+func _test_burgers_are_half_height() -> void:
+	_begin("burgers are drawn at half height")
+	check(Cfg.BURGER_LAYER_H == Cfg.TILE / 2,
+		"one layer is half a cell tall",
+		"%s px against a %s px cell" % [Cfg.BURGER_LAYER_H, Cfg.TILE])
+
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	if h.board == null:
+		return
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		var tag := "level %d" % (i + 1)
+		var tallest := 0
+		for plate in lv.plates:
+			tallest = maxi(tallest, lv.recipe(plate).size())
+		# Two cells is the ceiling: the ground storey is five rows of walking room
+		# and a burger that fills it is a burger in the way.
+		check(tallest * Cfg.BURGER_LAYER_H <= 2 * Cfg.TILE,
+			"%s tallest burger is at most two cells of drawing" % tag,
+			"%d layers is %.1f px" % [tallest, tallest * Cfg.BURGER_LAYER_H])
+
+		# The drawn stack has to sit on its plate and stay under the storey above.
+		var plate := lv.plates[0]
+		var plate_rect := h.board.burger_layer(plate, 0)
+		check(is_equal_approx(plate_rect.position.y + plate_rect.size.y,
+				float(plate.y * Cfg.TILE)),
+			"%s the bottom layer sits on the plate" % tag,
+			"underside at %s, wanted %s" % [
+				plate_rect.position.y + plate_rect.size.y, plate.y * Cfg.TILE])
+		check(plate_rect.size.x == plate.width * Cfg.TILE,
+			"%s a layer is as wide as its plate" % tag)
+		var top := h.board.burger_layer(plate, maxi(tallest - 1, 0))
+		check(top.position.y > float((plate.y - 3) * Cfg.TILE),
+			"%s the drawn stack stays in the bottom three rows" % tag,
+			"top at row %.2f" % (top.position.y / Cfg.TILE))
+		# Layer n sits directly on layer n-1: no gaps, no overlap.
+		var abuts := true
+		for n in range(1, tallest):
+			var lower := h.board.burger_layer(plate, n - 1)
+			var upper := h.board.burger_layer(plate, n)
+			if not is_equal_approx(lower.position.y, upper.position.y + upper.size.y):
+				abuts = false
+		check(abuts, "%s the drawn layers stack without gaps" % tag)
+	h.teardown()
+
+	# The logical stack is untouched: a part still joins it one cell at a time, so
+	# halving the drawing must not change where anything stops.
+	var span: LevelData.Span = LevelData.get_level(0).plates[0]
+	check(h.board.stack_top_row(span) == span.y - h.board.stack(span.x).size(),
+		"the logical stack is still one layer per cell")
+	h.teardown()
+
+
+## The character sheets, checked as images rather than trusted.
+##
+## The whole point of the sheets is that the art can be replaced with a PNG, so
+## the things worth protecting are the contract rather than the drawing: every
+## character has a sheet, every sheet is the same size, every frame a cell
+## contract promises is actually filled, and the padding cells really are empty so
+## a replacement cannot inherit a stray frame. The pixels are read from the
+## imported texture, which is what the game blits, not from the PNG on disk.
+func _test_sheets() -> void:
+	_begin("character sheets")
+	var missing := Sheet.all_present()
+	check(missing.is_empty(), "every character has a sheet",
+		"missing %s" % ", ".join(missing))
+	if not missing.is_empty():
+		return
+
+	var want := Sheet.size()
+	for character: String in Sheet.CHARACTERS:
+		var tex := Sheet.texture(character)
+		var got := tex.get_size()
+		check(Vector2i(got) == want,
+			"%s sheet is %dx%d" % [character, want.x, want.y],
+			"got %dx%d" % [got.x, got.y])
+
+	# Every promised frame has art in it and every padding cell is clear.
+	var blank_used := []
+	var dirty_pad := []
+	for character: String in Sheet.CHARACTERS:
+		for anim in Sheet.ROWS:
+			for frame in int(Sheet.FRAMES[anim]):
+				if _cell(character, anim, frame)["n"] == 0:
+					blank_used.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
+			for frame in range(int(Sheet.FRAMES[anim]), Sheet.COLUMNS):
+				if _cell(character, anim, frame)["n"] > 0:
+					dirty_pad.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
+	check(blank_used.is_empty(), "every frame in the layout has art in it",
+		"blank %s" % ", ".join(blank_used))
+	check(dirty_pad.is_empty(), "padding cells are empty",
+		"unexpected art in %s" % ", ".join(dirty_pad))
+
+	# The frames of an animation have to differ from each other, or it is one
+	# picture with a row of copies of itself.
+	var still := []
+	for character: String in Sheet.CHARACTERS:
+		for anim in Sheet.ROWS:
+			if int(Sheet.FRAMES[anim]) < 2:
+				continue
+			var sigs := {}
+			for frame in int(Sheet.FRAMES[anim]):
+				sigs[_cell(character, anim, frame)["sig"]] = true
+			if sigs.size() == 1:
+				still.append("%s row %d" % [character, Sheet.row(anim)])
+	check(still.is_empty(), "frames within an animation differ from each other",
+		"identical frames in %s" % ", ".join(still))
+
+	# Everyone stands on the baseline: there is art in the bottom row of the cell
+	# and none below it, which is what Sheet's anchor promises. A character drawn
+	# a pixel high floats, and it is the kind of thing that survives a redraw.
+	var off_baseline := []
+	var never_lands := []
+	for character: String in Sheet.CHARACTERS:
+		for anim in Sheet.ROWS:
+			var lands := false
+			for frame in int(Sheet.FRAMES[anim]):
+				var low: int = _cell(character, anim, frame)["low"]
+				# A bob lifts the feet a pixel or two; hanging in the air does not.
+				if low < Sheet.CELL.y - 3:
+					off_baseline.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
+				if low == Sheet.CELL.y - 1:
+					lands = true
+			if not lands:
+				never_lands.append("%s row %d" % [character, Sheet.row(anim)])
+	check(off_baseline.is_empty(), "no frame floats more than a bob off the floor",
+		"floating in %s" % ", ".join(off_baseline))
+	check(never_lands.is_empty(), "every animation has its feet on the floor",
+		"never touching it: %s" % ", ".join(never_lands))
+
+	# Nothing may spill into the next cell. A frame drawn too wide used to smear
+	# into the following column, which shows up as a stray frame in a padded cell
+	# and as junk in the middle of a replacement sheet.
+	var spills := []
+	for character: String in Sheet.CHARACTERS:
+		for anim in Sheet.ROWS:
+			for frame in range(Sheet.COLUMNS):
+				var c := _cell(character, anim, frame)
+				if c["n"] > 0 and (c["right"] >= Sheet.CELL.x or c["low"] >= Sheet.CELL.y):
+					spills.append("%s r%d c%d" % [character, Sheet.row(anim), frame])
+	check(spills.is_empty(), "no frame spills out of its cell",
+		"spilling in %s" % ", ".join(spills))
+
+	# The chef's eyes only show when he is facing somewhere, which the old drawing
+	# code did by faking a facing of zero on a ladder. The climb frames have to
+	# carry that themselves now.
+	var eyes := [Vector2i(9, 11), Vector2i(11, 11)]
+	var climb_eyes := 0
+	for frame in int(Sheet.FRAMES[Sheet.Anim.CLIMB]):
+		for at in eyes:
+			if _pixel(Sheet.CHEF, Sheet.Anim.CLIMB, frame, at) == Cfg.COL_OUTLINE:
+				climb_eyes += 1
+	var walk_eyes := 0
+	for at in eyes:
+		if _pixel(Sheet.CHEF, Sheet.Anim.WALK, 0, at) == Cfg.COL_OUTLINE:
+			walk_eyes += 1
+	check(walk_eyes == eyes.size(), "the chef has eyes when he is walking",
+		"%d of %d" % [walk_eyes, eyes.size()])
+	check(climb_eyes == 0, "and none while he is on a ladder",
+		"%d stray eye pixels" % climb_eyes)
+
+	# The committed PNGs have to be what the art code paints. A sheet that was
+	# regenerated and not re-imported, or edited by hand, looks fine and plays fine
+	# while no longer being reproducible from the project, which is the one property
+	# the sheets are here to guarantee.
+	var drifted := []
+	for character: String in Sheet.CHARACTERS:
+		var painted := CharArt.sheet(character)
+		var got := Sheet.texture(character).get_image()
+		if got.get_size() != painted.get_size():
+			drifted.append("%s size" % character)
+			continue
+		var mismatch := 0
+		for y in painted.get_height():
+			for x in painted.get_width():
+				if not got.get_pixel(x, y).is_equal_approx(painted.get_pixel(x, y)):
+					mismatch += 1
+		if mismatch > 0:
+			drifted.append("%s %d px" % [character, mismatch])
+	check(drifted.is_empty(),
+		"the committed sheets match the art that draws them",
+		"run tools/make_sheets.gd and --import, then: %s" % ", ".join(drifted))
+
+	# The three nasties are told apart by their art now, so each sheet has to carry
+	# its own colour and not the other two.
+	for character: String in [Sheet.HOTDOG, Sheet.EGG, Sheet.PICKLE]:
+		var mine: Color = CharArt.VILLAIN_COLORS[character]
+		var own := 0
+		var others := 0
+		for anim in Sheet.ROWS:
+			for frame in int(Sheet.FRAMES[anim]):
+				for seen in _cell(character, anim, frame)["colors"].keys():
+					if seen == mine.to_rgba32():
+						own += 1
+					elif seen in [CharArt.VILLAIN_COLORS[Sheet.HOTDOG].to_rgba32(),
+							CharArt.VILLAIN_COLORS[Sheet.EGG].to_rgba32(),
+							CharArt.VILLAIN_COLORS[Sheet.PICKLE].to_rgba32()]:
+						others += 1
+		check(own > 0 and others == 0,
+			"%s is drawn in its own colour only" % character,
+			"%d of its own, %d of another nasty's" % [own, others])
+
+
+## One cell of a character's sheet, measured. `n` non-background pixels, `low` the
+## lowest row holding any, and `sig` a fingerprint for comparing two frames.
+func _cell(character: String, anim: int, frame: int) -> Dictionary:
+	var img := Sheet.texture(character).get_image()
+	var r := Sheet.region(anim, frame)
+	var n := 0
+	var low := -1
+	var right := -1
+	var sig := 0
+	var colors := {}
+	for y in r.size.y:
+		for x in r.size.x:
+			var c := img.get_pixel(int(r.position.x) + x, int(r.position.y) + y)
+			if c.is_equal_approx(Cfg.COL_BG):
+				continue
+			n += 1
+			low = y
+			right = x
+			sig = sig * 131 + x * 7919 + y * 104729 + c.to_rgba32()
+			colors[c.to_rgba32()] = true
+	return {"n": n, "low": low, "right": right, "sig": sig, "colors": colors}
+
+
+## One pixel of a character's sheet, in cell coordinates.
+func _pixel(character: String, anim: int, frame: int, at: Vector2i) -> Color:
+	var img := Sheet.texture(character).get_image()
+	var r := Sheet.region(anim, frame)
+	return img.get_pixel(int(r.position.x) + at.x, int(r.position.y) + at.y)
 
 
 ## The most recent popup the game raised, which is how the tests read the short
