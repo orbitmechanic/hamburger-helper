@@ -7,9 +7,16 @@ extends Node2D
 
 signal step_finished
 
-## ease()'s curve argument for an ease-out cubic. Godot implements this exactly,
-## so the easing is the engine's rather than a pow() written out here.
-const CURVE_CUBIC_OUT := 3.0
+## The box that counts as the actor for contact, in node coordinates. The node
+## origin is the centre of the grid cell, so this runs from the shoulders down to
+## the feet.
+##
+## Deliberately not the cell and not the sprite. The cell is 16x24 and the chef's
+## hat is six pixels of that, so treating a cell as the body gave him a catch zone
+## a cell and a half in every direction - the chef died while his sprite was
+## visibly a full character away from the nasty that got him, which reads as the
+## game lying. The body is what a player reads as the character.
+const HITBOX := Rect2(-6, -2, 12, 10)
 
 var board: Board
 var cell := Vector2i.ZERO
@@ -38,13 +45,37 @@ func begin_step(target: Vector2i, dur: float) -> void:
 	moving = true
 
 
+## Where the actor is drawn, relative to the cell it is in. Overridden by anything
+## that draws itself somewhere other than its cell, so contact follows the picture.
+func visual_offset() -> Vector2:
+	return Vector2.ZERO
+
+
+## The box contact is tested against, in world pixels.
+##
+## Built from the drawn position rather than the cell, so two actors standing in
+## neighbouring cells are not touching - and two actors whose sprites overlap are
+## touching even mid-step, which is the case a cell-based check got wrong in both
+## directions at once.
+func hit_rect() -> Rect2:
+	return Rect2(position + visual_offset() + HITBOX.position, HITBOX.size)
+
+
 ## Advances the move. Returns true on the frame the move completes.
+##
+## Linear, and that is the whole fix for movement looking jerky. There used to be
+## an ease-out cubic here, applied to every single cell: each cell covered most of
+## its distance in the first third and then crawled to a stop, and the next cell
+## launched again from zero. The result is a stutter at every cell boundary that
+## looks like dropped frames but is not. Easing belongs to a whole movement, not
+## to each step of it; a walk that covers cells in a straight line at one speed is
+## what reads as smooth at this resolution.
 func tick_step(delta: float) -> bool:
 	if not moving:
 		return false
 	_step_t -= delta
 	var t := clampf(1.0 - _step_t / _step_dur, 0.0, 1.0)
-	position = _from.lerp(_to, ease(t, CURVE_CUBIC_OUT))
+	position = _from.lerp(_to, t)
 	if _step_t > 0.0:
 		return false
 	position = _to

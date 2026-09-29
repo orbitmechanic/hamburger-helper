@@ -30,6 +30,7 @@ func _run() -> void:
 	_test_levels_validate()
 	_test_validator_has_teeth()
 	_test_level_geometry()
+	_test_chef_never_starts_trapped()
 	await _test_parts_are_centred()
 	_test_ingredient_columns_line_up()
 	_test_burgers_have_room()
@@ -51,6 +52,7 @@ func _run() -> void:
 	await _test_player_falls_off_a_ledge()
 	await _test_pepper_stuns_a_nasty()
 	await _test_pepper_is_fired_by_a_key()
+	await _test_contact_is_drawn_contact()
 	await _test_falling_food_squashes()
 	await _test_riding_a_part()
 	await _test_game_starts_every_level()
@@ -272,6 +274,57 @@ func _test_level_geometry() -> void:
 			kinds[lv.enemy_kinds[cell]] = true
 		check(kinds.size() == 3, "%s uses hot dog, egg and pickle" % tag,
 			"found %d kinds" % kinds.size())
+
+
+## The chef must never begin a level somewhere he cannot get out of.
+##
+## This is not a style rule, it is a fairness one, and it caught a real trap: DINNER
+## RUSH started the chef in the top-left cell of the ground storey, where the only way
+## out ran the length of a one-wide corridor that a nasty patrols. He was not in
+## danger by bad luck, he was in a corner by design, and no amount of skill gets him
+## out of it. Two ways out is the bar - one and he is standing in a trap.
+##
+## The walking rules are written out again here rather than borrowed from the chef or
+## from tools/survival_bot.gd, because the point of the check is that they agree. A
+## test that called the same helper the code under test calls would pass no matter what
+## the rules were.
+func _test_chef_never_starts_trapped() -> void:
+	_begin("the chef never starts trapped")
+	for i in LevelData.count():
+		var h := _Harness.new(self)
+		var game := await h.start_game(i)
+		var board: Board = game.board
+		var chef: Vector2i = board.chef_spawn
+		var tag := "level %d" % (i + 1)
+		check(_walk_exits(board, chef) >= 2,
+			"%s starts the chef with %d way(s) out of %s" % [
+				tag, _walk_exits(board, chef), str(chef)],
+			"a chef with one way out is a chef in a corner")
+		h.teardown()
+
+
+## Ways out of a cell: the steps the chef could actually take from there.
+func _walk_exits(board: Board, from: Vector2i) -> int:
+	var out := 0
+	for dir: Vector2i in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+		var to := from + dir
+		if not Cfg.in_grid(to):
+			continue
+		if dir == Vector2i.UP or dir == Vector2i.DOWN:
+			if not (board.is_ladder(from) or board.is_ladder(to)):
+				continue
+			if board.blocks_player(to):
+				continue
+			if not (board.is_ladder(to) or board.floor_below(to)):
+				continue
+		else:
+			if board.blocks_player(to):
+				continue
+			if not (board.floor_below(to) or board.is_ladder(to)):
+				continue
+		out += 1
+	return out
+
 
 
 ## A part is drawn over the middle of the cells it occupies, and the burger it
@@ -944,6 +997,24 @@ func _test_sheets() -> void:
 	check(still.is_empty(), "frames within an animation differ from each other",
 		"identical frames in %s" % ", ".join(still))
 
+	# The cells are see-through. A filled cell draws a dark box the size of the
+	# cell behind every character, which covers the part of the cell the character
+	# jumps into and lifts into - the space is not spare, it has to be visible.
+	var solid := []
+	for character: String in Sheet.CHARACTERS:
+		var opaque := 0
+		var total := 0
+		for anim in Sheet.ROWS:
+			for frame in range(Sheet.COLUMNS):
+				total += Sheet.CELL.x * Sheet.CELL.y
+				opaque += int(_cell(character, anim, frame)["n"])
+		# The characters are blocky, so a lot of a cell is legitimately empty, but
+		# nothing like all of it: a filled cell would be at 100%.
+		if float(opaque) / float(total) > 0.5:
+			solid.append("%s %.0f%%" % [character, 100.0 * float(opaque) / float(total)])
+	check(solid.is_empty(), "the cells are transparent, not filled boxes",
+		"too solid: %s" % ", ".join(solid))
+
 	# Everyone stands on the baseline: there is art in the bottom row of the cell
 	# and none below it, which is what Sheet's anchor promises. A character drawn
 	# a pixel high floats, and it is the kind of thing that survives a redraw.
@@ -1011,7 +1082,14 @@ func _test_sheets() -> void:
 		var mismatch := 0
 		for y in painted.get_height():
 			for x in painted.get_width():
-				if not got.get_pixel(x, y).is_equal_approx(painted.get_pixel(x, y)):
+				var a := got.get_pixel(x, y)
+				var b := painted.get_pixel(x, y)
+				# Alpha always, colour only where the pixel is visible: the colour
+				# hiding under a fully transparent pixel is not part of the art and
+				# does not survive a round trip through the importer intact.
+				if absf(a.a - b.a) > 0.01:
+					mismatch += 1
+				elif b.a >= 0.5 and not a.is_equal_approx(b):
 					mismatch += 1
 		if mismatch > 0:
 			drifted.append("%s %d px" % [character, mismatch])
@@ -1052,7 +1130,7 @@ func _cell(character: String, anim: int, frame: int) -> Dictionary:
 	for y in r.size.y:
 		for x in r.size.x:
 			var c := img.get_pixel(int(r.position.x) + x, int(r.position.y) + y)
-			if c.is_equal_approx(Cfg.COL_BG):
+			if c.a < 0.5:
 				continue
 			n += 1
 			low = y
@@ -1125,14 +1203,72 @@ func _test_pepper_is_fired_by_a_key() -> void:
 	h.game_node.add_child(enemy)
 	enemy.add_to_group(&"enemies")
 	enemy.setup(g.board, player.cell + Vector2i.RIGHT, Enemy.Kind.HOTDOG, player)
-	enemy.place(player.cell + Vector2i.RIGHT)
 	player.pepper_time = Player.PEPPER_TIME
+
+	# A nasty in the next cell over is not touching him. This is the case the old
+	# cell check got wrong in the direction that mattered: the chef could be caught
+	# with a cell of empty floor drawn on screen between him and the nasty.
+	enemy.place(player.cell + Vector2i.RIGHT)
 	g._check_catches()
-	check(enemy.state == Enemy.St.STUN, "a nasty touching the shimmer is stunned",
+	check(enemy.state != Enemy.St.STUN, "a nasty in the next cell along is not touching",
+		"state is %d" % enemy.state)
+	check(not g._touching(enemy), "and their boxes do not overlap")
+
+	# A nasty on the chef's own cell is.
+	enemy.place(player.cell)
+	g._check_catches()
+	check(enemy.state == Enemy.St.STUN, "a nasty on top of the shimmer is stunned",
 		"state is %d" % enemy.state)
 	check(player.pepper_left == 0, "zapping does not spend a second charge",
 		"%d left" % player.pepper_left)
 
+	h.teardown()
+
+
+## The chef is caught when he and a nasty are touching on the screen.
+##
+## This used to be "when they are in the same cell or next to it", which is a
+## three-by-three block of cells around the chef: the chef died while a nasty was
+## visibly a full character away, with floor drawn between them. Contact is now
+## body boxes in world pixels, and the box is smaller than a cell on purpose.
+func _test_contact_is_drawn_contact() -> void:
+	_begin("contact is contact")
+	var h := _Harness.new(self)
+	await h.start_game(0)
+	var g: Game = h.game_node.get_child(0) as Game
+	if g == null or g.player == null:
+		return
+	var player: Player = g.player
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.add_to_group(&"enemies")
+	enemy.setup(g.board, player.cell + Vector2i(3, 0), Enemy.Kind.HOTDOG, player)
+
+	# Far away, obviously not touching.
+	enemy.place(player.cell + Vector2i(3, 0))
+	check(not g._touching(enemy), "a nasty three cells away is not touching")
+
+	# Next door. Still not touching, which is the whole complaint.
+	enemy.place(player.cell + Vector2i.RIGHT)
+	check(not g._touching(enemy), "a nasty in the next cell is not touching",
+		"chef at %s boxes %s vs %s" % [str(player.cell),
+			str(player.hit_rect()), str(enemy.hit_rect())])
+	check(not g._touching(enemy), "and nor is one in the cell above")
+	enemy.place(player.cell + Vector2i.UP)
+	check(not g._touching(enemy), "above the chef is not touching either")
+	enemy.place(player.cell + Vector2i(3, 0))
+
+	# The same cell, and half a cell, are.
+	enemy.place(player.cell)
+	check(g._touching(enemy), "a nasty on the chef's cell is touching")
+	enemy.place(player.cell + Vector2i.RIGHT)
+	enemy.position -= Vector2(Cfg.TILE * 0.5, 0.0)
+	enemy.cell = enemy.cell
+	check(g._touching(enemy), "and so is one halfway across the gap")
+
+	# A raised hitbox still catches a chef standing underneath.
+	enemy.place(player.cell + Vector2i.DOWN)
+	check(not g._touching(enemy), "a nasty in the cell below is not touching")
 	h.teardown()
 
 

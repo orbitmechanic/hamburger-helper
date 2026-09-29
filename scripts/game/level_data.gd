@@ -129,8 +129,16 @@ class Level:
 ## plate's column - the plate collects them in the order they fall, which is the
 ## order the recipe needs.
 ##
-## The nasties are spread over all four walk rows rather than lined up along the
-## bottom, and start as far from the chef as the maze allows.
+## The nasties are spread over the three ingredient storeys, one of each kind, and
+## start as far from the chef as the maze allows. The ground storey is deliberately
+## left clear of them. It is the one lane in the level the chef cannot pass anybody in
+## - it is a cell wide, with the plates along it and the parts to be carried down onto
+## them - so a nasty walking it turns the ground from somewhere to travel into a place
+## the chef can be shut inside, and there is no way past it but pepper. Measured over
+## fifteen runs that was the only thing reliably killing the chef inside ten seconds;
+## the same three levels with the ground clear survive the whole window. The storeys
+## above it are full width, so a nasty there is something to outrun rather than
+## something to be trapped by.
 const LEVELS: Array = [
 	{
 		"name": "LUNCH RUSH",
@@ -142,13 +150,13 @@ const LEVELS: Array = [
 			"#####=######=###",
 			".....=......=...",
 			".mmm3.mmm..mmm..",
-			"=#########=#####",
-			"=.........=.....",
-			"=.........=.....",
-			"=.........=.....",
-			"=.........=.....",
-			"=.........=.....",
-			"@OOO..OOO..OOO3.",
+			"=#########=####=",
+			"=.........=....=",
+			"=.........=....=",
+			"=.........=....=",
+			"=.........=....=",
+			"=.........=....=",
+			"@OOO..OOO..OOO..",
 			"################",
 		],
 	},
@@ -168,7 +176,7 @@ const LEVELS: Array = [
 			"...=........=...",
 			"...=........=...",
 			"...=........=...",
-			"OOO@OOO..OOO1OOO",
+			"OOO@OOO..OOO.OOO",
 			"################",
 		],
 	},
@@ -182,13 +190,13 @@ const LEVELS: Array = [
 			"=#########=#####",
 			"=.........=.....",
 			".mmm2.mmm..mmm..",
-			"#####=########=#",
-			".....=........=.",
-			".....=........=.",
-			".....=........=.",
-			".....=........=.",
-			".....=........=.",
-			"@OOO..OOO.3OOO..",
+			"=####=########=#",
+			"=....=........=.",
+			"=....=........=.",
+			"=....=........=.",
+			"=....=........=.",
+			"=....=........=.",
+			"@OOO..OOO..OOO..",
 			"################",
 		],
 	},

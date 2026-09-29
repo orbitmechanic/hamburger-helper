@@ -275,7 +275,7 @@ func _check_catches() -> void:
 		# nasty that runs into the shimmer is stunned and no charge is spent.
 		for e in get_tree().get_nodes_in_group(&"enemies"):
 			var enemy := e as Enemy
-			if enemy != null and is_instance_valid(enemy) and _touching(enemy.cell):
+			if enemy != null and is_instance_valid(enemy) and _touching(enemy):
 				enemy.stun()
 				_popup("ZAP!", Cfg.COL_PEPPER)
 				return
@@ -286,13 +286,21 @@ func _check_catches() -> void:
 			continue
 		if enemy.state == Enemy.St.SQUASH or enemy.state == Enemy.St.STUN:
 			continue
-		if _touching(enemy.cell):
+		if _touching(enemy):
 			_on_player_died()
 			return
 
 
-func _touching(cell: Vector2i) -> bool:
-	return absi(cell.x - player.cell.x) + absi(cell.y - player.cell.y) <= 1
+## Whether the chef and a nasty are actually touching.
+##
+## Body boxes in world pixels, so this answers the question the player is asking -
+## are these two things touching on the screen - and not the easier one the cell
+## check answered, which was whether they were in the same cell or next to it. That
+## is what let the chef die a cell and a half from the nasty that got him, with
+## nothing on screen overlapping: an eight-pixel gap the player could see and the
+## game ignored.
+func _touching(enemy: Enemy) -> bool:
+	return player.hit_rect().intersects(enemy.hit_rect())
 
 
 func _on_player_died() -> void:

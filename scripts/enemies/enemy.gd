@@ -25,6 +25,18 @@ const STEP_CLIMB := Cfg.STEP_CLIMB * 2.0
 const STEP_FALL := 0.07
 ## Chance per step of turning around, so packs do not march in lockstep.
 const TURN_CHANCE := 0.04
+## How close the chef has to be, in cells, before a nasty will abandon its storey and
+## make for his row.
+##
+## Without a limit, every nasty walks to wherever the chef is as soon as he moves, so
+## all three of them end up on the one row he is on - which, because he has to climb
+## down to the plates, is more often than not the ground corridor, a single cell wide
+## with no way past anyone on it and all three of them heading for it. They are then
+## not a pack spread over the building, they are a queue in the one passage the chef
+## has to use. With a limit, a nasty presses the chef where he is working but keeps its
+## own storey when he is only passing through, which is what the original does: the
+## threat is local, and outrunning it is a real option.
+const CHASE_RANGE := 6
 const STUN_TIME := 4.0
 const SQUASH_TIME := 0.6
 ## A part with a nasty on top drops two levels instead of one. Worth a lot.
@@ -200,6 +212,11 @@ func _drive() -> void:
 func _chase_target() -> int:
 	if player == null or player.state == Player.St.JUMP:
 		return cell.y
+	# Further out, walking to the chef would carry the nasty off its own storey and
+	# into the corridor for no reason. "Pawn the storey" is the same answer as
+	# "patrol", so this just stays where it is.
+	if absi(player.cell.x - cell.x) + absi(player.cell.y - cell.y) > CHASE_RANGE:
+		return cell.y
 	return player.cell.y
 
 
@@ -323,14 +340,19 @@ func _draw() -> void:
 		queue_redraw()
 		return
 	var anim := anim_state()
-	# A nasty being carried rides up on the part it is standing on, which is a
-	# couple of pixels above the cell it is held in.
-	var lift := -2 if state == St.RIDE else 0
-	draw_set_transform(Vector2(lift, 0), 0.0, Vector2(facing, 1.0))
+	draw_set_transform(Vector2(visual_offset().x, 0.0), 0.0, Vector2(facing, 1.0))
 	draw_texture_rect_region(sheet, Rect2(Sheet.offset(), Vector2(Sheet.CELL)),
 			Sheet.region(anim, anim_frame(anim)))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	queue_redraw()
+
+
+## A nasty being carried rides up on the part it is standing on, which is a
+## couple of pixels above the cell it is held in. Reported through visual_offset()
+## so the contact box is lifted with the picture rather than left behind under the
+## plate.
+func visual_offset() -> Vector2:
+	return Vector2(0, -2) if state == St.RIDE else Vector2.ZERO
 
 
 ## Which sheet this nasty draws from. One sheet per character, so this is the only

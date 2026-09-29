@@ -102,7 +102,12 @@ func _outline(at: Vector2, size: Vector2, c: Color, width: float) -> void:
 static func sheet(character: String) -> Image:
 	var size := Sheet.size()
 	var image := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
-	image.fill(Cfg.COL_BG)
+	# Transparent, not the background colour. A sheet is drawn over the level, and
+	# a filled cell paints a dark box the size of the cell behind every character -
+	# including the part of the cell the character is not standing in, which is the
+	# room it has to jump and to be lifted into. The cell has to be see-through for
+	# that space to be usable at all.
+	image.fill(Color(0, 0, 0, 0))
 	var p := CharArt.new(image)
 	for anim in Sheet.ROWS:
 		for frame in int(Sheet.FRAMES[anim]):

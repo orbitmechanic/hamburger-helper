@@ -88,9 +88,13 @@ and testable with no display. A part's drawn position is the centre of the
 `Rect2` spanning its cells, so a wide part sits over the middle of the row rather
 than to one side of it.
 
-The nasties are spread over all four walk rows rather than lined up along the
-bottom, and start at least `LevelData.ENEMY_MIN_DISTANCE` cells from the chef, so
-the opening of a level is spent working rather than dodging.
+The nasties are spread over the three ingredient storeys, one of each kind, and start
+at least `LevelData.ENEMY_MIN_DISTANCE` cells from the chef, so the opening of a level
+is spent working rather than dodging. They only leave their own storey when the chef is
+within `Enemy.CHASE_RANGE` cells, so they press him where he is working instead of
+converging on the one corridor he has to use to reach the plates. The ground storey is
+deliberately clear of them: it is a single cell wide, a chef with a nasty in it has no
+way past, and the plates along it are somewhere to travel, not somewhere to work.
 
 ## Layout
 
