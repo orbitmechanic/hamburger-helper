@@ -14,15 +14,24 @@ signal crossed(ing: Ingredient)
 enum St { WALK, CLIMB, FALL, JUMP }
 
 const JUMP_DUR := 0.17
-## Peak of the hop, in pixels. A one-cell hop that clears an enemy but not much
-## more: the jump is a dodge, not a way to climb a storey.
+## Peak of a running hop, in pixels: a long, low arc that clears a nasty without
+## carrying the chef any real height.
 const JUMP_LIFT := 13.0
+## A stopped hop is a reach rather than a dodge, so it arcs twice as high.
+const JUMP_LIFT_STAND := JUMP_LIFT * 2.0
+## How far each kind of hop travels, in cells. A stopped hop covers two; adding a
+## stride's momentum carries it one cell further.
+const JUMP_STAND_CELLS := 2
+const JUMP_RUN_CELLS := 3
 
 var facing := 1
 var state: St = St.WALK
 ## Seasoning charges in the jar, and how long the current spray is drawn for.
 var pepper_left := 0
 var spray_time := 0.0
+## Peak of the hop in flight, so a running dodge and a standing reach can arc
+## differently.
+var _jump_lift := JUMP_LIFT
 
 ## The ingredient currently being walked over, and which of its cells have been
 ## covered. A part is only pushed when every one of them has been.
@@ -62,7 +71,7 @@ func _process(delta: float) -> void:
 	# The hop arc is applied on top of the linear cell-to-cell interpolation, so
 	# the jump still ends exactly on a grid cell.
 	if state == St.JUMP and moving:
-		position.y -= sin(PI * step_phase()) * JUMP_LIFT
+		position.y -= sin(PI * step_phase()) * _jump_lift
 	if done:
 		_arrived()
 
@@ -105,12 +114,6 @@ func add_pepper(charges: int = 1) -> void:
 
 
 func _drive() -> void:
-	if moving:
-		return
-	if state == St.FALL:
-		_start_fall()
-		return
-
 	var want := Vector2i.ZERO
 	if Input.is_action_pressed(&"move_left"):
 		want = Vector2i.LEFT
@@ -120,8 +123,20 @@ func _drive() -> void:
 		want = Vector2i.UP
 	elif Input.is_action_pressed(&"move_down"):
 		want = Vector2i.DOWN
-	elif Input.is_action_just_pressed(&"jump") and _can_jump():
-		_begin_jump()
+
+	# The jump key is read outside the direction chain and before the "busy"
+	# bail-out, so holding a direction can no longer swallow it - the chef used to
+	# have to stop dead before he could jump at all. Where the hop goes is the
+	# player's choice: nothing held reaches straight up, a direction held hops that
+	# way, and hopping mid-stride carries a cell further.
+	if Input.is_action_just_pressed(&"jump") and _can_jump(want, moving):
+		_begin_jump(want, moving)
+		return
+
+	if moving:
+		return
+	if state == St.FALL:
+		_start_fall()
 		return
 
 	if want != Vector2i.ZERO:
@@ -155,39 +170,53 @@ func _climb(dir: Vector2i) -> void:
 	begin_step(target, Cfg.STEP_CLIMB)
 
 
-func _can_jump() -> bool:
-	if state == St.CLIMB:
+func _can_jump(want: Vector2i, running: bool) -> bool:
+	# Only from a standstill or a stride on solid ground: not already mid-hop, not
+	# falling, and never off a ladder rung or out of thin air.
+	if state != St.WALK:
 		return false
-	# A jump is a push off a platform, not a leap off a ladder rung. Both halves
-	# matter: a ladder cell is not a launch pad even when there is a ledge below
-	# it, and a chef with nothing under him is already falling.
 	if board.is_ladder(cell) or not board.floor_below(cell):
 		return false
-	return _jump_landing() != Vector2i.ZERO
+	return _jump_landing(want, running) != Vector2i.ZERO
 
 
-## Where a jump puts the chef down. The hop clears the cell in front of him rather
-## than landing in it, which is the whole point: the chef used to hop exactly one
-## cell, so a nasty in the next cell caught him as he came down and the jump could
-## never get him over anything. Carrying the hop to the far side of that cell is
-## what makes it a dodge. A wall right in front cancels it; a wall on the far side
-## shortens it rather than cancelling it, so a jump beside a wall is still a jump.
-func _jump_landing() -> Vector2i:
-	var one := cell + Vector2i(facing, 0)
-	if board.blocks_player(one):
-		return Vector2i.ZERO
-	var two := cell + Vector2i(facing * 2, 0)
-	if not board.blocks_player(two):
-		return two
-	return one
+## Where a jump puts the chef down.
+##
+## The direction is the player's. Nothing held is a reach straight up, to get a
+## hand to whatever sits on a plate on the storey above; a direction held is a hop
+## that way, and the hop clears the cell in front rather than landing in it, which
+## is what turns it into a dodge - the chef used to land in that cell, so a nasty
+## standing there caught him as he came down. A hop taken mid-stride covers one cell
+## more. A wall shortens the hop; a wall right in front cancels it.
+func _jump_landing(want: Vector2i, running: bool) -> Vector2i:
+	if want.x == 0:
+		var up := cell + Vector2i.UP
+		if not Cfg.in_grid(up) or board.blocks_player(up):
+			return Vector2i.ZERO
+		return up
+	var reach := JUMP_RUN_CELLS if running else JUMP_STAND_CELLS
+	for i in range(1, reach + 1):
+		var target := cell + Vector2i(want.x * i, 0)
+		if board.blocks_player(target):
+			return cell + Vector2i(want.x * (i - 1), 0) if i > 1 else Vector2i.ZERO
+	return cell + Vector2i(want.x * reach, 0)
 
 
-func _begin_jump() -> void:
-	var landing := _jump_landing()
+func _begin_jump(want: Vector2i, running: bool) -> void:
+	var landing := _jump_landing(want, running)
+	if landing == Vector2i.ZERO:
+		return
+	if want.x != 0:
+		facing = want.x
+	# A hop from a stop is a real leap and arcs twice as high; a hop taken
+	# mid-stride is a long low skip. Nothing catches the chef while he is in the
+	# air, so the height is free to read as effort.
+	_jump_lift = JUMP_LIFT if running else JUMP_LIFT_STAND
+	state = St.JUMP
 	# The longer hop is given more time, but not twice as much, so clearing a
 	# nasty reads as one quick push-off rather than a slow drift across the floor.
+	# A reach straight up is one cell, so it is the quickest hop of the three.
 	var dist := absi(landing.x - cell.x)
-	state = St.JUMP
 	begin_step(landing, JUMP_DUR * (1.0 + 0.4 * float(dist - 1)))
 
 

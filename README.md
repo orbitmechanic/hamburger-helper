@@ -25,7 +25,7 @@ fails to compile.
 | Action | Keys |
 |--------|------|
 | Move, and climb ladders | Arrow keys or WASD |
-| Jump one cell | Space or X |
+| Jump, or reach up | Space or X |
 | Spray seasoning | F, or the gamepad B button |
 | Pause | P or Escape |
 | Restart | R |
@@ -47,10 +47,17 @@ before returning to the ledge it started on, and cannot catch the chef while it 
 down.
 
 The jump is a dodge, not a way to climb. The chef can only push off a platform,
-never sideways off a ladder, and the hop carries him clean over the cell in front
-rather than into it, so a nasty standing in the next cell is gone over rather than
-landed on. Jump into a wall and the jump is cancelled; jump beside one and it is a
-shorter hop.
+never sideways off a ladder, and a sideways hop carries him clean over the cell in
+front rather than into it, so a nasty standing in the next cell is gone over rather
+than landed on. Jump into a wall and the jump is cancelled; jump beside one and it
+is a shorter hop.
+
+Which jump you get is up to what you are holding when you press it. Hold nothing
+and the chef reaches straight up, which is how he takes a jar sitting on a plate
+above the track he walks; hold a direction and he hops that way, two cells from a
+standstill; hold one while he is already running and the stride carries him a cell
+further, to three. A hop from a stop is a real leap and arcs twice as high as one
+taken at a run, so a standstill jump visibly covers more ground.
 
 Baiting a nasty under a bun is worth real points. When the chef walks the full
 width of a part and a nasty is standing on it, the nasty rides the part down a

@@ -48,6 +48,7 @@ func _run() -> void:
 	await _test_column_builds_a_burger()
 	await _test_crossing_needs_the_full_width()
 	await _test_player_jump()
+	await _test_reach_grabs_a_jar_above()
 	await _test_ladder_climb()
 	await _test_player_falls_off_a_ledge()
 	await _test_pepper_stuns_a_nasty()
@@ -812,18 +813,57 @@ func _test_player_jump() -> void:
 	h.player.place(Vector2i(4, 0))
 	h.player.facing = 1
 	check(board.floor_below(Vector2i(4, 0)), "the chef starts on a platform")
+	# Held direction, so this is the sideways hop, not the reach. The key is read
+	# before the move, so holding a direction cannot swallow the jump.
+	h.hold(&"move_right")
 	h.tap(&"jump")
-	await h.frames(4)
-	check(h.player.state == Player.St.JUMP or h.player.cell.x == 6,
-		"the jump starts")
-	await h.until(func() -> bool: return h.player.state == Player.St.WALK, 2.0)
-	check(h.player.cell.x == 6, "the jump clears the cell in front",
-		"x is %d" % h.player.cell.x)
-	check(h.player.cell.y == 0, "and does not change row", "y is %d" % h.player.cell.y)
+	await h.until(func() -> bool: return h.player.state == Player.St.JUMP, 1.0)
+	check(h.player.state == Player.St.JUMP, "a direction held still jumps",
+		"state is %d" % h.player.state)
+	await h.until(func() -> bool: return not h.player.moving, 2.0)
 	check(h.player.state == Player.St.WALK, "and it ends standing",
 		"state is %d" % h.player.state)
+	h.release(&"move_right")
+	check(h.player.cell.x == 6, "a stopped hop sideways covers two cells",
+		"x is %d" % h.player.cell.x)
+	check(h.player.cell.y == 0, "and does not change row", "y is %d" % h.player.cell.y)
 	check(h.player.cell != enemy.cell, "so the chef does not land on the nasty",
 		"both at %s" % str(h.player.cell))
+
+	# Taking off mid-stride carries a cell further than taking off from a stop.
+	h.player.place(Vector2i(4, 0))
+	h.player.facing = 1
+	h.hold(&"move_right")
+	await h.until(func() -> bool: return h.player.moving, 1.0)
+	check(h.player.moving, "the chef is running when he jumps")
+	h.tap(&"jump")
+	await h.until(func() -> bool: return h.player.state == Player.St.JUMP, 1.0)
+	await h.until(func() -> bool: return not h.player.moving, 2.0)
+	h.release(&"move_right")
+	check(h.player.cell.x == 8, "a running hop covers three",
+		"x is %d" % h.player.cell.x)
+
+	# ...and it is the stopped hop that arcs high, so a reach really reaches. Read
+	# off the sprite rather than the constant, because the arc is what the player
+	# sees; a slack margin keeps it from depending on which frame caught the peak.
+	# Row 3 rather than the top row, because a reach from the top row has no cell
+	# above it to reach into.
+	var stand_peak := await _hop_peak(h, Vector2i(4, 3), false)
+	var run_peak := await _hop_peak(h, Vector2i(4, 3), true)
+	check(stand_peak > run_peak + 6.0,
+		"a stopped hop arcs about twice as high as a running one",
+		"stopped rose %.1fpx, running rose %.1fpx" % [stand_peak, run_peak])
+
+	# Nothing held is a reach straight up, to the plate on the storey above.
+	h.player.place(Vector2i(4, 3))
+	h.player.facing = 1
+	check(board.floor_below(Vector2i(4, 3)), "and this storey has a floor too")
+	h.tap(&"jump")
+	await h.until(func() -> bool: return h.player.state == Player.St.JUMP, 1.0)
+	check(h.player.cell == Vector2i(4, 2), "the reach targets the cell above",
+		"cell is %s" % str(h.player.cell))
+	await h.until(func() -> bool: return not h.player.moving, 2.0)
+	check(h.player.cell.x == 4, "without moving sideways", "x is %d" % h.player.cell.x)
 
 	# With nothing under him the chef is already falling; he must not jump.
 	h.player.place(Vector2i(4, 5))
@@ -843,6 +883,81 @@ func _test_player_jump() -> void:
 	await h.frames(10)
 	check(h.player.cell == ladder_cell, "no jump sideways off a ladder",
 		"ended at %s" % str(h.player.cell))
+	h.teardown()
+
+
+## Runs one hop and reports how far the chef's sprite rose above the row he took
+## off from, in pixels. Both hops stay on the same row, so the whole difference is
+## the arc.
+func _hop_peak(h: _Harness, from: Vector2i, running: bool) -> float:
+	h.player.place(from)
+	h.player.facing = 1
+	if running:
+		h.hold(&"move_right")
+		await h.until(func() -> bool: return h.player.moving, 1.0)
+	var base := h.player.position.y
+	var peak := base
+	h.tap(&"jump")
+	await h.until(func() -> bool: return h.player.state == Player.St.JUMP, 1.0)
+	while h.player.moving:
+		peak = minf(peak, h.player.position.y)
+		await h.frame()
+	if running:
+		h.release(&"move_right")
+	return base - peak
+
+
+## The stopped jump exists so the chef can reach a jar sitting on a plate above the
+## track he normally walks, so the pickup is the behaviour worth pinning down: the
+## hop has to carry his cell onto the jar, not just his sprite up past it.
+func _test_reach_grabs_a_jar_above() -> void:
+	_begin("reach grabs a jar above")
+	var h := _Harness.new(self)
+	var g := await h.start_game(0)
+	if g == null:
+		return
+	g._enter(Game.Phase.PLAYING)
+	await h.frame()
+	var player := g.player
+	var board := g.board
+
+	# Find somewhere the reach can be used from: a floor to push off, and a free
+	# cell directly above it to reach into.
+	var stand := Vector2i(-1, -1)
+	for y in range(Cfg.GRID_H):
+		for x in range(1, Cfg.GRID_W - 1):
+			var at := Vector2i(x, y)
+			if not board.floor_below(at) or board.is_ladder(at):
+				continue
+			if not Cfg.in_grid(at + Vector2i.UP) or board.blocks_player(at + Vector2i.UP):
+				continue
+			stand = at
+			break
+		if stand.x >= 0:
+			break
+	if stand.x < 0:
+		check(false, "the level offers somewhere to reach from")
+		h.teardown()
+		return
+	check(true, "the level offers somewhere to reach from")
+
+	player.place(stand)
+	player.pepper_left = 0
+	var jar := Bonus.new()
+	h.game_node.add_child(jar)
+	jar.setup(stand + Vector2i.UP, Bonus.Kind.PEPPER)
+	jar.add_to_group(&"bonuses")
+	var jar_id := jar.get_instance_id()
+	await h.frame()
+
+	h.tap(&"jump")
+	# Wait on the charge rather than the jar: the pickup frees the node, and a
+	# lambda holding it would be holding a freed object.
+	await h.until(func() -> bool: return player.pepper_left > 0, 2.0)
+	check(not is_instance_id_valid(jar_id), "the reach takes the jar off the plate above",
+		"the jar is still sitting there")
+	check(player.pepper_left == 1, "and it goes into the jar as a charge",
+		"%d left" % player.pepper_left)
 	h.teardown()
 
 
