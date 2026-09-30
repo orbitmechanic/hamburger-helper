@@ -61,6 +61,7 @@ func _run() -> void:
 	await _test_burger_completes_the_level()
 	await _test_running_out_of_chefs()
 	await _test_a_death_resets_the_nasties()
+	await _test_the_level_directs_the_chef()
 
 	print("")
 	if _failed == 0:
@@ -1002,6 +1003,15 @@ func _test_player_falls_off_a_ledge() -> void:
 	check(h.player.cell.y == 3, "he falls when there is no floor", "y is %d" % h.player.cell.y)
 	check(h.player.state == Player.St.WALK, "and lands standing")
 	check(board.floor_below(h.player.cell), "on something solid")
+
+	# A fall is one cell and about four frames of real time. Playing the four-frame
+	# hop arc across it would strobe, so a fall holds the reach. The state is set
+	# directly because a fall is over before a test can sample a frame of it, and
+	# the point here is the mapping rather than the timing.
+	h.player.state = Player.St.FALL
+	check(h.player.anim_state() == Sheet.Anim.JUMP, "a fall still uses the jump art")
+	check(h.player.anim_frame(Sheet.Anim.JUMP) == int(Sheet.FRAMES[Sheet.Anim.JUMP]) - 1,
+		"held on the reach rather than played through")
 	h.teardown()
 
 
@@ -1156,27 +1166,33 @@ func _test_sheets() -> void:
 			"%s sheet is %dx%d" % [character, want.x, want.y],
 			"got %dx%d" % [got.x, got.y])
 
-	# Every promised frame has art in it and every padding cell is clear.
+	# Every frame a character promises has art in it, and every cell it does not
+	# promise is clear. The two are one contract rather than two: a sheet keeps the
+	# whole shared grid, so the rows a character has no use for are expected to be
+	# blank, and a row that is meant to be blank but has a walk cycle in it is just
+	# as wrong as a missing frame.
 	var blank_used := []
 	var dirty_pad := []
 	for character: String in Sheet.CHARACTERS:
 		for anim in Sheet.ROWS:
-			for frame in int(Sheet.FRAMES[anim]):
-				if _cell(character, anim, frame)["n"] == 0:
-					blank_used.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
-			for frame in range(int(Sheet.FRAMES[anim]), Sheet.COLUMNS):
-				if _cell(character, anim, frame)["n"] > 0:
+			var promised: bool = anim in Sheet.anims_for(character)
+			for frame in Sheet.COLUMNS:
+				var n: int = _cell(character, anim, frame)["n"]
+				if promised and frame < int(Sheet.FRAMES[anim]):
+					if n == 0:
+						blank_used.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
+				elif n > 0:
 					dirty_pad.append("%s r%d f%d" % [character, Sheet.row(anim), frame])
 	check(blank_used.is_empty(), "every frame in the layout has art in it",
 		"blank %s" % ", ".join(blank_used))
-	check(dirty_pad.is_empty(), "padding cells are empty",
+	check(dirty_pad.is_empty(), "cells no character claims are empty",
 		"unexpected art in %s" % ", ".join(dirty_pad))
 
 	# The frames of an animation have to differ from each other, or it is one
 	# picture with a row of copies of itself.
 	var still := []
 	for character: String in Sheet.CHARACTERS:
-		for anim in Sheet.ROWS:
+		for anim in Sheet.anims_for(character):
 			if int(Sheet.FRAMES[anim]) < 2:
 				continue
 			var sigs := {}
@@ -1194,8 +1210,8 @@ func _test_sheets() -> void:
 	for character: String in Sheet.CHARACTERS:
 		var opaque := 0
 		var total := 0
-		for anim in Sheet.ROWS:
-			for frame in range(Sheet.COLUMNS):
+		for anim in Sheet.anims_for(character):
+			for frame in range(Sheet.FRAMES[anim]):
 				total += Sheet.CELL.x * Sheet.CELL.y
 				opaque += int(_cell(character, anim, frame)["n"])
 		# The characters are blocky, so a lot of a cell is legitimately empty, but
@@ -1211,7 +1227,7 @@ func _test_sheets() -> void:
 	var off_baseline := []
 	var never_lands := []
 	for character: String in Sheet.CHARACTERS:
-		for anim in Sheet.ROWS:
+		for anim in Sheet.anims_for(character):
 			var lands := false
 			for frame in int(Sheet.FRAMES[anim]):
 				var low: int = _cell(character, anim, frame)["low"]
@@ -1232,31 +1248,48 @@ func _test_sheets() -> void:
 	# and as junk in the middle of a replacement sheet.
 	var spills := []
 	for character: String in Sheet.CHARACTERS:
-		for anim in Sheet.ROWS:
-			for frame in range(Sheet.COLUMNS):
+		for anim in Sheet.anims_for(character):
+			for frame in range(Sheet.FRAMES[anim]):
 				var c := _cell(character, anim, frame)
 				if c["n"] > 0 and (c["right"] >= Sheet.CELL.x or c["low"] >= Sheet.CELL.y):
 					spills.append("%s r%d c%d" % [character, Sheet.row(anim), frame])
 	check(spills.is_empty(), "no frame spills out of its cell",
 		"spilling in %s" % ", ".join(spills))
 
-	# The chef's eyes only show when he is facing somewhere, which the old drawing
-	# code did by faking a facing of zero on a ladder. The climb frames have to
-	# carry that themselves now.
-	var eyes := [Vector2i(9, 11), Vector2i(11, 11)]
-	var climb_eyes := 0
+	# The imported chef has to actually be in his cells. The old drawn chef had two
+	# hardcoded eye pixels checked, because the old drawing code used to fake a
+	# facing of zero on a ladder to hide them. A drawn chef has no such landmark, and
+	# hardcoding two pixels of his would break the next time the art is touched, so
+	# what is checked is the thing the import can plausibly get wrong: the toque is
+	# there, and it is in the top of the cell. A figure measured from the wrong band
+	# of the source, or placed a pixel low, still looks like a chef on its own and is
+	# a hat where his face should be once he is on the board.
+	var hatless := []
+	var hat_low := []
+	for anim in [Sheet.Anim.WALK, Sheet.Anim.CLIMB]:
+		for frame in int(Sheet.FRAMES[anim]):
+			if _count_in_cell(Sheet.CHEF, anim, frame, ChefArt.COL_HAT) == 0:
+				hatless.append("r%d f%d" % [Sheet.row(anim), frame])
+			elif _count_in_cell(Sheet.CHEF, anim, frame, ChefArt.COL_HAT,
+					Rect2i(Vector2i.ZERO, Vector2i(Sheet.CELL.x, Sheet.CELL.y / 2))) == 0:
+				hat_low.append("r%d f%d" % [Sheet.row(anim), frame])
+	var face_frames: int = int(Sheet.FRAMES[Sheet.Anim.WALK]) \
+			+ int(Sheet.FRAMES[Sheet.Anim.CLIMB])
+	check(hatless.size() == 0, "the chef has a hat in every walk and climb frame",
+		"%d of %d bare" % [hatless.size(), face_frames])
+	check(hat_low.is_empty(), "and it is on top of him, not at his feet",
+		"hat below the waist in %s" % ", ".join(hat_low))
+
+	# The run and the climb are the same six frames, because the climb reuses the
+	# run. They are separate rows rather than one row read twice so the layout stays
+	# the same shape for a sheet that ever wants to draw a different climb, and this
+	# is what stops the two quietly drifting apart.
+	var drift := []
 	for frame in int(Sheet.FRAMES[Sheet.Anim.CLIMB]):
-		for at in eyes:
-			if _pixel(Sheet.CHEF, Sheet.Anim.CLIMB, frame, at) == Cfg.COL_OUTLINE:
-				climb_eyes += 1
-	var walk_eyes := 0
-	for at in eyes:
-		if _pixel(Sheet.CHEF, Sheet.Anim.WALK, 0, at) == Cfg.COL_OUTLINE:
-			walk_eyes += 1
-	check(walk_eyes == eyes.size(), "the chef has eyes when he is walking",
-		"%d of %d" % [walk_eyes, eyes.size()])
-	check(climb_eyes == 0, "and none while he is on a ladder",
-		"%d stray eye pixels" % climb_eyes)
+		if _cell(Sheet.CHEF, Sheet.Anim.WALK, frame)["sig"] \
+				!= _cell(Sheet.CHEF, Sheet.Anim.CLIMB, frame)["sig"]:
+			drift.append(str(frame))
+	check(drift.is_empty(), "the climb is the run", "differs in frame %s" % ", ".join(drift))
 
 	# The committed PNGs have to be what the art code paints. A sheet that was
 	# regenerated and not re-imported, or edited by hand, looks fine and plays fine
@@ -1293,7 +1326,7 @@ func _test_sheets() -> void:
 		var mine: Color = CharArt.VILLAIN_COLORS[character]
 		var own := 0
 		var others := 0
-		for anim in Sheet.ROWS:
+		for anim in Sheet.anims_for(character):
 			for frame in int(Sheet.FRAMES[anim]):
 				for seen in _cell(character, anim, frame)["colors"].keys():
 					if seen == mine.to_rgba32():
@@ -1335,6 +1368,27 @@ func _pixel(character: String, anim: int, frame: int, at: Vector2i) -> Color:
 	var img := Sheet.texture(character).get_image()
 	var r := Sheet.region(anim, frame)
 	return img.get_pixel(int(r.position.x) + at.x, int(r.position.y) + at.y)
+
+
+## How many pixels of one colour are in a cell, or in a box within it.
+##
+## `within` is cell-relative and defaults to the whole cell. Exact match rather than
+## a tolerance, unlike the visual check's: this is reading a sheet the generator
+## painted from a palette of its own, so a colour that is nearly right is a colour
+## that is wrong.
+func _count_in_cell(character: String, anim: int, frame: int, want: Color,
+		within: Rect2i = Rect2i(Vector2i.ZERO, Vector2i(Sheet.CELL))) -> int:
+	var img := Sheet.texture(character).get_image()
+	var r := Sheet.region(anim, frame)
+	var want32 := want.to_rgba32()
+	var n := 0
+	for y in within.size.y:
+		for x in within.size.x:
+			var c := img.get_pixel(int(r.position.x) + within.position.x + x,
+					int(r.position.y) + within.position.y + y)
+			if c.a >= 0.5 and c.to_rgba32() == want32:
+				n += 1
+	return n
 
 
 ## The most recent popup the game raised, which is how the tests read the short
@@ -1683,10 +1737,28 @@ func _test_a_death_resets_the_nasties() -> void:
 			parked = false
 	check(parked, "the test parks every nasty on the spawn")
 
+	# The chef is moved off his spawn first, so the respawn is a real move and this
+	# can tell "he went back" apart from "he never left".
+	g.player.place(g.board.chef_spawn + Vector2i(1, 0))
+	var fell_at := g.player.cell
 	var before := GameState.chefs
 	g._on_player_died()
 	check(GameState.chefs == before - 1, "the chef loses one")
-	check(g.player.cell == g.board.chef_spawn, "and goes back to his spawn")
+	# He is out of play where he fell: he is not walked back to his spawn mid-death,
+	# so the surprise is something the player sees rather than a blink, and he
+	# cannot be caught a second time on the way or walk into a nasty sent home.
+	check(g.player.cell == fell_at, "and stays where he fell, out of play")
+	check(g.player.anim_state() == Sheet.Anim.DEATH, "showing the surprised pose")
+	check(not g.player.is_processing(), "and not taking input")
+
+	# The respawn is a beat later rather than the same frame, so the surprise is
+	# something the player actually sees. Driven through the game's own clock
+	# instead of waiting on real frames, so the test is not timing dependent.
+	for i in 5:
+		g._process(Game.DEATH_TIME / 5.0)
+	check(g.player.cell == g.board.chef_spawn, "and goes back to his spawn after the beat")
+	check(g.player.anim_state() != Sheet.Anim.DEATH, "no longer wearing the pose")
+	check(g.player.is_processing(), "and back in play")
 
 	var all_home := true
 	for i in nasts.size():
@@ -1701,6 +1773,67 @@ func _test_a_death_resets_the_nasties() -> void:
 		if (e as Enemy).cell == g.board.chef_spawn:
 			clear = false
 	check(clear, "so nobody is left on top of him")
+	g.queue_free()
+	await _frame()
+
+
+## The four moments the chef is not in charge of his own animation: arriving, being
+## caught, and clearing a level. The pose belongs to the level because in every one
+## of them the chef is not doing anything - the level card is an overlay, he has
+## just been taken off the board, or the last plate is down and he is standing still.
+## What this protects is that a pose is released when the moment passes: a chef who
+## keeps celebrating after the banner is gone is a chef standing on a board he is
+## no longer allowed to play.
+func _test_the_level_directs_the_chef() -> void:
+	_begin("the level directs the chef")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	GameState.reset_run()
+
+	# Start_level is where the level card goes up, and the chef is under the
+	# parachute while it is there. No drop: the card is static, so a falling chef
+	# would land somewhere the player has not been shown.
+	check(g.phase == Game.Phase.INTRO, "a level starts on its card")
+	check(g.player.anim_state() == Sheet.Anim.PARACHUTE, "and the chef comes in under a parachute")
+	check(g.player.anim_frame(Sheet.Anim.PARACHUTE) == 0, "on the only frame it has")
+
+	g._enter(Game.Phase.PLAYING)
+	check(g.player.anim_state() != Sheet.Anim.PARACHUTE, "the parachute is for the card only")
+	check(g.player.anim_state() == Sheet.Anim.IDLE, "and from there he is playing again")
+
+	# Spraying is a punch for exactly as long as the puff is in the air, and the
+	# throw plays out over the puff rather than looping at its own speed. The
+	# timer is driven directly here, because it is the mapping being checked and
+	# the player's own clock only ticks on real frames.
+	g.player.spend_pepper()
+	check(g.player.anim_state() == Sheet.Anim.PUNCH, "a spray plays the punch, not the walk cycle")
+	check(g.player.anim_frame(Sheet.Anim.PUNCH) == 0, "starting on the wind-up")
+	g.player.spray_time = Player.SPRAY_TIME * 0.5
+	check(g.player.anim_frame(Sheet.Anim.PUNCH) == 1,
+		"halfway through the puff is the middle of the throw")
+	g.player.spray_time = Player.SPRAY_TIME * 0.01
+	check(g.player.anim_frame(Sheet.Anim.PUNCH) == 2,
+		"and it reaches the last frame before the puff is gone")
+	g.player.spray_time = 0.0
+	check(g.player.anim_state() == Sheet.Anim.IDLE, "and the chef is himself again")
+
+	# A cleared level plays the victory off the banner's clock and then holds it.
+	# Both halves matter: an animation that restarts every frame never gets past
+	# its first frame, and one that never holds keeps re-flourishing under a
+	# banner that is still up.
+	g._enter(Game.Phase.LEVEL_CLEAR)
+	var first := g.player.anim_frame(g.player.anim_state())
+	check(g.player.anim_state() == Sheet.Anim.VICTORY, "a cleared level has the chef celebrating")
+	var last := int(Sheet.FRAMES[Sheet.Anim.VICTORY]) - 1
+	for i in 8:
+		g._process(Game.PHASE_TIME / 8.0)
+		var f := g.player.anim_frame(g.player.anim_state())
+		check(f >= first, "the victory never rewinds")
+		check(f <= last, "and never runs off the end of the animation")
+	check(g.player.anim_frame(g.player.anim_state()) == last,
+		"and settles on the final frame for the rest of the banner")
+
 	g.queue_free()
 	await _frame()
 

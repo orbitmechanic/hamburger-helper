@@ -46,6 +46,14 @@ doing nothing quietly. A flattened nasty likewise lies flashing for five seconds
 before returning to the ledge it started on, and cannot catch the chef while it is
 down.
 
+The chef animates off the art, not off a state machine drawn to match it. He comes
+in under a parachute for the level card, throws a punch for exactly as long as the
+spray is in the air, plays a flourish and holds the pose when a level is cleared, and
+goes down surprised for a beat when he is caught before being put back on his spawn.
+The moments the level is in charge of his animation are the ones where he is not
+doing anything himself, so the level sets the pose and takes it back; see
+`Player.set_pose`.
+
 The jump is a dodge, not a way to climb. The chef can only push off a platform,
 never sideways off a ladder, and a sideways hop carries him clean over the cell in
 front rather than into it, so a nasty standing in the next cell is gone over rather
@@ -129,6 +137,7 @@ scripts/food/     ingredient kinds, and the falling parts
 scripts/enemies/  roaming hazards
 scripts/items/    bonus pickups
 assets/sheets/    one animation sheet per character, generated
+assets/source/    original source art the chef's sheet is generated from
 tools/            level and sheet generators, level checker, screenshots, visual checks
 tests/            headless test runner
 ```
@@ -150,29 +159,42 @@ is also how Unity and Godot slice a sheet by default:
 - One animation per row, in a fixed order, frames left to right.
 - **Every** character's sheet uses the identical layout, so any sheet can replace
   any other. Rows shorter than the column count are padded with empty cells rather
-  than cropped, so every row starts at the same place on every sheet.
+  than cropped, so every row starts at the same place on every sheet. A character
+  that has no use for a row leaves it empty, which is why the sheet is shared
+  rather than trimmed per character: `Sheet.anims_for()` is what says which rows a
+  character actually owns.
 - The anchor is the bottom centre of the cell, so feet stay on the baseline between
   frames and a walk does not look like a bounce. A cell is taller than a grid cell
   because the chef's hat is taller than one cell.
 
 | Row | Animation | Frames | Used by |
 |-----|-----------|--------|---------|
-| 0 | `IDLE`    | 2 | the chef, breathing while he waits |
-| 1 | `WALK`    | 4 | everyone; played off the step, one cycle per cell |
-| 2 | `CLIMB`   | 4 | everyone |
-| 3 | `JUMP`    | 2 | everyone; also fall and ride |
-| 4 | `SQUASH`  | 1 | a nasty that has been flattened |
-| 5 | `STUN`    | 1 | a stung nasty, X eyes |
+| 0 | `IDLE`    | 4 | the chef, breathing while he waits |
+| 1 | `WALK`    | 6 | everyone; played off the step, one cycle per cell |
+| 2 | `CLIMB`   | 6 | everyone; the chef's climb is his run |
+| 3 | `JUMP`    | 4 | everyone; also fall and ride |
+| 4 | `PUNCH`   | 3 | the chef, for as long as a spray is in the air |
+| 5 | `VICTORY` | 5 | the chef, once a level is cleared |
+| 6 | `DEATH`   | 1 | the chef, caught and surprised |
+| 7 | `PARACHUTE` | 1 | the chef, under the level card |
+| 8 | `SQUASH`  | 1 | a nasty that has been flattened |
+| 9 | `STUN`    | 1 | a stung nasty, X eyes |
 
-A sheet is therefore `64x144`. The chef's art faces right and the game mirrors it
+A sheet is therefore `96x240`. The chef's art faces right and the game mirrors it
 by scaling, so there is one set of eyes to keep in step with the walk rather than
 two that can disagree. A nasty's body colour is baked into its sheet instead of
 being tinted on at draw time, which is what lets a sheet be replaced with
 deliberately different-looking art.
 
-The art itself is `tools/char_art.gd`, which paints into an `Image` with
-`fill_rect` - no viewport and no framebuffer, so it runs headless and its output is
-reproducible:
+The chef's art is not drawn by code. `assets/source/chef_a2.png` is the original
+hand-drawn sheet, and `tools/chef_art.gd` slices it: it flood-fills the source to
+find each pose rather than trusting a regular grid, since the wide poses cross the
+nominal cell boundary, measures each figure by its hat for a body axis, aligns the
+figures of one animation to a shared baseline, and scales them into the cells with
+nearest-neighbour sampling. It also flips them, because the source faces left and
+sheets face right. The three nasties are still drawn by `tools/char_art.gd` with
+`fill_rect` - no viewport and no framebuffer, so both generators run headless and
+their output is reproducible:
 
 ```sh
 godot --headless --script res://tools/make_sheets.gd

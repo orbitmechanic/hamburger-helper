@@ -30,45 +30,82 @@ extends RefCounted
 ## One cell, in pixels. Wide enough to hold a character, tall enough to hold the
 ## chef with his hat on, and the same for everybody.
 const CELL := Vector2i(16, 24)
-## Cells across the sheet. The widest animation is four frames.
-const COLUMNS := 4
+## Cells across the sheet. The widest animation is the chef's run, at six frames.
+const COLUMNS := 6
 
 enum Anim {
 	IDLE,
 	WALK,
 	CLIMB,
 	JUMP,
+	PUNCH,
+	VICTORY,
+	DEATH,
+	PARACHUTE,
 	SQUASH,
 	STUN
 }
 
 ## Rows, in sheet order. The index in this array is the row on the sheet, so
 ## adding one here is what puts it on every sheet at once.
-const ROWS := [Anim.IDLE, Anim.WALK, Anim.CLIMB, Anim.JUMP, Anim.SQUASH, Anim.STUN]
+const ROWS := [Anim.IDLE, Anim.WALK, Anim.CLIMB, Anim.JUMP, Anim.PUNCH,
+		Anim.VICTORY, Anim.DEATH, Anim.PARACHUTE, Anim.SQUASH, Anim.STUN]
 
 ## How many frames each animation has. A character with fewer simply leaves the
 ## rest of its row empty.
 const FRAMES := {
-	Anim.IDLE: 2,
-	Anim.WALK: 4,
-	Anim.CLIMB: 4,
-	Anim.JUMP: 2,
+	Anim.IDLE: 4,
+	Anim.WALK: 6,
+	Anim.CLIMB: 6,
+	Anim.JUMP: 4,
+	Anim.PUNCH: 3,
+	Anim.VICTORY: 5,
+	Anim.DEATH: 1,
+	Anim.PARACHUTE: 1,
 	Anim.SQUASH: 1,
 	Anim.STUN: 1,
 }
 
 ## Frames per second for each animation, so the walk cycles at a speed that
 ## matches the actor's cell movement rather than looking pasted on.
+##
+## Only the animations played off a clock of their own read this. WALK, CLIMB and
+## JUMP are driven by the actor's step instead, and PUNCH and VICTORY are played
+## once and held on the last frame, so none of them use it.
 const FPS := {
 	Anim.IDLE: 2.0,
 	Anim.WALK: 6.0,
 	Anim.CLIMB: 6.0,
 	Anim.JUMP: 6.0,
+	Anim.PUNCH: 8.0,
+	Anim.VICTORY: 6.0,
+	Anim.DEATH: 4.0,
+	Anim.PARACHUTE: 4.0,
 	Anim.SQUASH: 4.0,
 	Anim.STUN: 4.0,
 }
 
+## Which animations each character actually has.
+##
+## Every sheet keeps the identical grid, so a character that has no use for a row
+## simply leaves it blank rather than the row being dropped from the layout - a
+## shared layout is the whole reason a sheet can be swapped for any other. This is
+## the one thing that is allowed to differ per character: the chef punches, throws
+## a victory pose and comes down under a parachute, and a hotdog does not. A blank
+## row is therefore expected art, not a missing frame, and the tests ask
+## `anims_for()` which rows are meant to be empty.
+const CHEF_ANIMS := [Anim.IDLE, Anim.WALK, Anim.CLIMB, Anim.JUMP, Anim.PUNCH,
+		Anim.VICTORY, Anim.DEATH, Anim.PARACHUTE]
+const VILLAIN_ANIMS := [Anim.IDLE, Anim.WALK, Anim.CLIMB, Anim.JUMP, Anim.SQUASH,
+		Anim.STUN]
+
 const DIR := "res://assets/sheets/"
+
+## The chef's own art, as drawn by hand rather than painted by the generator. It
+## lives in the repository rather than being read from outside it, because the
+## generated sheets are checked against the code that draws them and a sheet that
+## could not be rebuilt from a checkout would quietly stop being reproducible.
+const CHEF_SOURCE := "res://assets/source/chef_a2.png"
 
 const CHEF := "chef"
 const HOTDOG := "hotdog"
@@ -93,6 +130,19 @@ static func row(anim: Anim) -> int:
 ## Rows down the sheet.
 static func row_count() -> int:
 	return ROWS.size()
+
+
+## The animations a character has art for, so a row it has no use for is known to
+## be deliberately blank rather than forgotten.
+static func anims_for(character: String) -> Array:
+	return CHEF_ANIMS if character == CHEF else VILLAIN_ANIMS
+
+
+## An animation's name, for anything that reports one. "anim 4" is not something
+## anyone can act on, and a report about a frame is usually the only clue a sheet
+## problem leaves.
+static func anim_name(anim: Anim) -> String:
+	return Anim.keys()[anim]
 
 
 ## How many frames an animation has, wrapping a looping one and clamping a

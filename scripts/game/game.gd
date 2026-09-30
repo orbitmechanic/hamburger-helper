@@ -10,6 +10,12 @@ enum Phase { INTRO, PLAYING, LEVEL_CLEAR, GAME_OVER, ALL_CLEAR }
 
 ## How long a result banner stays up before moving on.
 const PHASE_TIME := 2.6
+## How long the chef's victory runs before he settles on the last frame. Shorter
+## than the banner on purpose, so he holds the pose rather than restarting it.
+const VICTORY_TIME := 1.2
+## How long the chef stays down after being caught, before he is put back. Long
+## enough to read the surprised pose, short enough not to feel like a stall.
+const DEATH_TIME := 0.7
 ## A pepper dose the level starts with, as in the original.
 const STARTING_PEPPER := 1
 ## Seconds between random bonuses appearing, and how many can be out at once.
@@ -29,6 +35,10 @@ var paused := false
 var _phase_t := 0.0
 var _popups: Array = []
 var _bonus_t := 0.0
+## Counts the chef down from `DEATH_TIME` while he is on the floor. Overlapping the
+## phase timer rather than becoming a phase of its own: the board is still in play
+## behind him, it is only waiting for the chef.
+var _dying := 0.0
 
 
 func _ready() -> void:
@@ -86,9 +96,15 @@ func start_level(index: int) -> void:
 	_popups.clear()
 	_bonus_t = BONUS_EVERY
 	paused = false
+	_dying = 0.0
 	_set_player_active(false)
 	phase = Phase.INTRO
 	_phase_t = Cfg.INTRO_TIME
+	# He comes in under the parachute for the level card. There is no drop and no
+	# descent: the level card is a static overlay, so a chef who fell into it would
+	# land on a ledge the player has not been shown yet, and the card would be
+	# covering the fall. The pose says "arriving" and the card does the timing.
+	player.set_pose(Sheet.Anim.PARACHUTE)
 	if hud != null:
 		hud.queue_redraw()
 
@@ -312,14 +328,28 @@ func _on_player_died() -> void:
 		var enemy := e as Enemy
 		if enemy != null and is_instance_valid(enemy):
 			enemy.reset_for_respawn()
+	# The chef is surprised, and stays that way long enough to be seen, rather than
+	# blinking out of one pose and into his spawn in the same frame. He is also out
+	# of play for it, so he cannot walk off into a nasty that has just been sent
+	# back to its ledge, nor be caught again before he is back.
+	player.set_pose(Sheet.Anim.DEATH)
 	if GameState.out_of_chefs():
 		_enter(Phase.GAME_OVER)
-	else:
-		_popup("OUCH!", Cfg.COL_PLATE)
-		_popup_tween(Cfg.cell_to_pixel(board.chef_spawn))
-		# The chef goes back to where he started: the plate work already done
-		# stays done.
-		player.place(board.chef_spawn)
+		return
+	_popup("OUCH!", Cfg.COL_PLATE)
+	_popup_tween(Cfg.cell_to_pixel(board.chef_spawn))
+	_dying = DEATH_TIME
+	_set_player_active(false)
+
+
+## Put the chef back where he started. The plate work already done stays done.
+func _revive() -> void:
+	_dying = 0.0
+	if player == null or not is_instance_valid(player):
+		return
+	# `place` hands the chef back to himself, so the surprised pose goes with it.
+	player.place(board.chef_spawn)
+	_set_player_active(true)
 
 
 # --- Flow -------------------------------------------------------------------
@@ -333,6 +363,16 @@ func _process(delta: float) -> void:
 	if paused:
 		return
 
+	# The chef is down. The board waits on him: no input, no catches, and the
+	# banner is not running, because none of that is the point of this beat.
+	if _dying > 0.0:
+		_dying -= delta
+		if _dying <= 0.0:
+			_revive()
+		if hud != null:
+			hud.queue_redraw()
+		return
+
 	match phase:
 		Phase.PLAYING:
 			_process_bonuses(delta)
@@ -342,11 +382,24 @@ func _process(delta: float) -> void:
 			# Everything that is not PLAYING just runs its phase timer down, which
 			# includes the level card, so INTRO deliberately falls through here.
 			_phase_t -= delta
+			_celebrate()
 			if _phase_t <= 0.0:
 				_advance()
 
 	if hud != null:
 		hud.queue_redraw()
+
+
+## Play the chef's victory off the back of the level-clear banner, which is longer
+## than the animation: he finishes the flourish and holds the pose for the rest of
+## it, then is gone when the banner is.
+func _celebrate() -> void:
+	if phase != Phase.LEVEL_CLEAR and phase != Phase.ALL_CLEAR:
+		return
+	if player == null or not is_instance_valid(player):
+		return
+	player.set_pose(Sheet.Anim.VICTORY,
+			clampf((PHASE_TIME - _phase_t) / VICTORY_TIME, 0.0, 1.0))
 
 
 ## The chef only moves and is only hit while the level is actually running.
@@ -358,11 +411,24 @@ func _set_player_active(active: bool) -> void:
 func _enter(next: Phase) -> void:
 	phase = next
 	_phase_t = PHASE_TIME
+	# The chef is only ever down during play. Anything that takes the board out of
+	# play takes him off the floor with it, or the death beat would swallow the
+	# banner it happens during.
+	_dying = 0.0
 	match next:
 		Phase.PLAYING:
+			# The parachute was only for the level card, so from here the chef is
+			# playing again and animates himself.
+			if player != null and is_instance_valid(player):
+				player.clear_pose()
 			_set_player_active(true)
 		Phase.LEVEL_CLEAR:
 			_set_player_active(false)
+			# Set here as well as from `_celebrate` so the very first frame of the
+			# banner is already the start of the flourish and not the last frame of
+			# whatever he was doing when the last plate went down.
+			if player != null and is_instance_valid(player):
+				player.set_pose(Sheet.Anim.VICTORY, 0.0)
 			_popup("LEVEL CLEAR!", Cfg.COL_BONUS)
 			GameState.save_progress()
 		Phase.GAME_OVER:

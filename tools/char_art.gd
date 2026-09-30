@@ -1,11 +1,14 @@
 class_name CharArt
 extends RefCounted
-## The character art, as drawing operations on an Image.
+## The nasties' art, as drawing operations on an Image.
 ##
-## This is the only place character art is defined. The game no longer draws
-## characters with draw_rect: it blits frames out of the generated sheet, so the
-## art here and the art on screen cannot drift apart, and replacing a character
-## means replacing its sheet rather than editing drawing code.
+## The game does not draw characters with draw_rect: it blits frames out of a
+## generated sheet, so the art here and the art on screen cannot drift apart, and
+## replacing a character means replacing its sheet rather than editing drawing
+## code. The chef is the one exception and it is not an inconsistency: his art is
+## a hand-drawn PNG rather than a set of shapes, so it is sliced by tools/chef_art.gd
+## and lands in the same grid. Both paths produce a sheet, which is what the tests
+## compare against the committed PNG.
 ##
 ## The `body_*` calls take actor coordinates, the same ones the old _draw() code
 ## used: (0, 0) is the centre of the actor's grid cell and its feet are at
@@ -108,125 +111,23 @@ static func sheet(character: String) -> Image:
 	# room it has to jump and to be lifted into. The cell has to be see-through for
 	# that space to be usable at all.
 	image.fill(Color(0, 0, 0, 0))
+	if character == Sheet.CHEF:
+		# The chef is drawn by hand and sliced, not painted here, so he keeps his
+		# own art rather than a description of it. See tools/chef_art.gd.
+		ChefArt.paint(image)
+		return image
 	var p := CharArt.new(image)
-	for anim in Sheet.ROWS:
+	# Only the rows this character actually has art for. Every sheet keeps the
+	# identical grid, so a row a character has no use for is left clear rather than
+	# dropped from the layout - but it must not be filled with a walk cycle that
+	# will never be played either, or the sheet claims a frame it does not mean.
+	for anim in Sheet.anims_for(character):
 		for frame in int(Sheet.FRAMES[anim]):
 			# Point the painter at the cell, then paint in actor coordinates. The
 			# art does not know or care which cell it is going into.
 			p.cell_at = Vector2i(frame * Sheet.CELL.x, Sheet.row(anim) * Sheet.CELL.y)
-			if character == Sheet.CHEF:
-				chef(p, anim, frame)
-			else:
-				villain(p, character, anim, frame)
+			villain(p, character, anim, frame)
 	return image
-
-
-# --- Chef -------------------------------------------------------------------
-
-
-## Frames for the chef. `frame` is the index within the animation.
-static func chef(p: CharArt, anim: int, frame: int) -> void:
-	match anim:
-		Sheet.Anim.WALK:
-			_walking(p, frame)
-		Sheet.Anim.CLIMB:
-			_climbing(p, frame)
-		Sheet.Anim.JUMP:
-			_jumping(p, frame)
-		_:
-			_standing(p, -1 if frame % 2 == 1 else 0, 0, 0)
-
-
-## The chef on the ground.
-##
-## `bob` lifts the whole chef a pixel, and `lift_left` / `lift_right` are how many
-## pixels each leg is off the floor. Lifting one leg at a time on alternate frames
-## is what makes the walk read at this size; a body bob on its own looks like the
-## chef is bouncing rather than walking.
-static func _standing(p: CharArt, bob: int, lift_left: int, lift_right: int,
-		arm_forward: bool = true) -> void:
-	# Arms. A blocky chef reads as a torso on legs without them, and the walk needs
-	# them anyway: with only the legs to animate, a four-frame cycle can only be two
-	# poses wearing four hats, and the whole thing looks like a stutter.
-	var back_arm_y := -2 if arm_forward else -1
-	var front_arm_x := 5 if arm_forward else 4
-	p.body(Rect2(-7, back_arm_y + bob, 2, 4), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(front_arm_x, -1 + bob, 2, 4), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(-5, 3 + bob + lift_left, 4, 5 - lift_left), Cfg.PLAYER_COOK_PANTS)
-	p.body(Rect2(1, 3 + bob + lift_right, 4, 5 - lift_right), Cfg.PLAYER_COOK_PANTS)
-	p.body(Rect2(-6, -1 + bob, 12, 5), Cfg.PLAYER_COOK_SHIRT)
-	# The belt is a single dark row along the hem. It used to be a two-pixel band
-	# across the middle of the legs, which left the chef standing in eight visible
-	# pixels of trousers - enough to be there, not enough to read as trousers.
-	p.body(Rect2(-6, 3 + bob, 12, 1), Cfg.COL_OUTLINE)
-	p.body(Rect2(-4, -6 + bob, 8, 6), Cfg.PLAYER_COOK_SKIN)
-	# Chef's hat: a band and a puff on top.
-	p.body(Rect2(-5, -7 + bob, 10, 3), Cfg.PLAYER_COOK_HAT)
-	p.body(Rect2(-6, -10 + bob, 12, 4), Cfg.PLAYER_COOK_HAT)
-	p.body_outline(Rect2(-6, -10 + bob, 12, 4), Cfg.COL_OUTLINE)
-	# Eyes, looking right. The game mirrors the sheet for the other way, so there
-	# is only ever one set of eyes to keep in step with the walk.
-	p.body(Rect2(1, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
-	p.body(Rect2(3, -5 + bob, 1, 2), Cfg.COL_OUTLINE)
-
-
-static func _walking(p: CharArt, frame: int) -> void:
-	# Four distinct poses: both feet down with the arm forward, right foot up with
-	# the arm back, both feet down with the arm back, left foot up with the arm
-	# forward. The body bobs on the frames with a foot in the air, which is what
-	# carries the weight, and the arm swings against the leading leg.
-	var lift := [0, 0, 0, 0]
-	if frame % 4 < 2:
-		lift[1] = 3
-	else:
-		lift[0] = 3
-	_standing(p, -1 if frame % 2 == 1 else 0, lift[0], lift[1],
-		frame == 0 or frame == 3)
-
-
-static func _climbing(p: CharArt, frame: int) -> void:
-	# On a ladder he turns to face it, so there are no eyes, and he pulls himself
-	# up one arm at a time. Four frames so each pull gets its own frame instead of
-	# both arms moving together.
-	var up := 1 if frame % 4 < 2 else -1
-	var leg_lift := 3 if frame % 2 == 0 else 0
-	p.body(Rect2(-5, 2 + leg_lift, 4, 6 - leg_lift), Cfg.PLAYER_COOK_PANTS)
-	p.body(Rect2(1, 2, 4, 6), Cfg.PLAYER_COOK_PANTS)
-	p.body(Rect2(-6, -1, 12, 5), Cfg.PLAYER_COOK_SHIRT)
-	# The raised arm reaches above the shoulder, the other hangs.
-	p.body(Rect2(up * 3, -6, 3, 6), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(-up * 4 - 1, -2, 3, 5), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(-5, 4, 10, 2), Cfg.COL_OUTLINE)
-	p.body(Rect2(-4, -6, 8, 6), Cfg.PLAYER_COOK_SKIN)
-	p.body(Rect2(-5, -7, 10, 3), Cfg.PLAYER_COOK_HAT)
-	p.body(Rect2(-6, -10, 12, 4), Cfg.PLAYER_COOK_HAT)
-	p.body_outline(Rect2(-6, -10, 12, 4), Cfg.COL_OUTLINE)
-
-
-static func _jumping(p: CharArt, frame: int) -> void:
-	# The arc is the game moving the node, not the art, so this row only has to
-	# say "off the floor" and "coming down".
-	#
-	# Legs spread in the air, then drawn up into a tuck. The tuck has to move the
-	# feet, not just the knees: the torso is drawn over the top of the legs, so
-	# shortening them where it cannot be seen leaves two identical frames.
-	if frame % 2 == 0:
-		p.body(Rect2(-5, 2, 4, 6), Cfg.PLAYER_COOK_PANTS)
-		p.body(Rect2(1, 2, 4, 6), Cfg.PLAYER_COOK_PANTS)
-	else:
-		p.body(Rect2(-4, 1, 4, 5), Cfg.PLAYER_COOK_PANTS)
-		p.body(Rect2(0, 1, 4, 5), Cfg.PLAYER_COOK_PANTS)
-	p.body(Rect2(-6, -1, 12, 5), Cfg.PLAYER_COOK_SHIRT)
-	# Arms out for balance, kept inside the cell so they cannot reach into the
-	# next column of the sheet.
-	p.body(Rect2(-7, -1, 2, 4), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(5, -1, 2, 4), Cfg.PLAYER_COOK_SHIRT)
-	p.body(Rect2(-4, -6, 8, 6), Cfg.PLAYER_COOK_SKIN)
-	p.body(Rect2(-5, -7, 10, 3), Cfg.PLAYER_COOK_HAT)
-	p.body(Rect2(-6, -10, 12, 4), Cfg.PLAYER_COOK_HAT)
-	p.body_outline(Rect2(-6, -10, 12, 4), Cfg.COL_OUTLINE)
-	p.body(Rect2(1, -5, 1, 2), Cfg.COL_OUTLINE)
-	p.body(Rect2(3, -5, 1, 2), Cfg.COL_OUTLINE)
 
 
 # --- Nasties ---------------------------------------------------------------
