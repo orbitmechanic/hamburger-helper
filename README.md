@@ -46,6 +46,17 @@ doing nothing quietly. A flattened nasty likewise lies flashing for five seconds
 before returning to the ledge it started on, and cannot catch the chef while it is
 down.
 
+The jump is a dodge, not a way to climb. The chef can only push off a platform,
+never sideways off a ladder, and the hop carries him clean over the cell in front
+rather than into it, so a nasty standing in the next cell is gone over rather than
+landed on. Jump into a wall and the jump is cancelled; jump beside one and it is a
+shorter hop.
+
+Baiting a nasty under a bun is worth real points. When the chef walks the full
+width of a part and a nasty is standing on it, the nasty rides the part down a
+second storey for the ride bonus and is crushed by it on the way, rather than
+just being flattened by the part leaving.
+
 ## Design notes
 
 Levels are authored as ASCII maps in `scripts/game/level_data.gd`, one character

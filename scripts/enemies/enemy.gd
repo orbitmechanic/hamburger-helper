@@ -86,11 +86,13 @@ func points() -> int:
 
 
 ## Whether this nasty is standing on a given part and would be carried by it.
+## The part is underfoot, so it fills the cell below him rather than his own, and
+## that is what it has to be matched against.
 func riding(ing: Ingredient) -> bool:
 	if ing == null or state in [St.SQUASH, St.RIDE, St.FALL]:
 		return false
 	for c in ing.cells:
-		if c == cell:
+		if c == cell + Vector2i.DOWN:
 			return true
 	return false
 
@@ -128,9 +130,6 @@ func _process(delta: float) -> void:
 	if under != null and under.falling and state != St.RIDE:
 		_squash()
 		return
-	if under != null and not under.falling and riding(under):
-		attach(under)
-		return
 
 	if done:
 		_arrived()
@@ -156,8 +155,9 @@ func _tick_timer(delta: float) -> void:
 
 func _tick_ride(delta: float) -> void:
 	if ride == null or not is_instance_valid(ride):
+		# The part boarded a burger and left the maze, so it took the nasty with it.
 		ride = null
-		state = St.WALK
+		_squash()
 		return
 	# Ride the part down: sit on whichever of its cells is nearest.
 	var best := ride.cells[0]
@@ -167,12 +167,11 @@ func _tick_ride(delta: float) -> void:
 	if ride.falling:
 		place(best)
 		return
-	# The part has landed. Step off, or fall if there is nothing to stand on.
+	# The part has landed, and it took him down with it, so it has crushed him.
+	# The ride itself was already paid for when the part was knocked
+	# (carried_rider); the squash is what takes the nasty out of play.
 	ride = null
-	state = St.WALK
-	if not board.floor_below(cell):
-		_begin_fall()
-	queue_redraw()
+	_squash()
 
 
 ## Picks this nasty up onto a part that is on its way down.

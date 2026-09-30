@@ -55,6 +55,7 @@ func _run() -> void:
 	await _test_contact_is_drawn_contact()
 	await _test_falling_food_squashes()
 	await _test_riding_a_part()
+	await _test_crossing_a_part_carries_the_nasty()
 	await _test_game_starts_every_level()
 	await _test_burger_completes_the_level()
 	await _test_running_out_of_chefs()
@@ -790,7 +791,9 @@ func _test_crossing_needs_the_full_width() -> void:
 # --- Player ----------------------------------------------------------------
 
 
-## The jump is a dodge, not a way to climb: one cell in the facing direction.
+## The jump is a dodge, not a way to climb: it clears the cell in front so a nasty
+## standing in it is gone over rather than landed on, and it only works as a push
+## off a platform, never sideways off a ladder.
 func _test_player_jump() -> void:
 	_begin("player jump")
 	var h := _Harness.new(self)
@@ -799,16 +802,47 @@ func _test_player_jump() -> void:
 	if board == null:
 		return
 
+	# A nasty one cell in front is the whole reason the jump has to clear a cell.
+	# It is frozen so it stays put rather than wandering into the landing cell.
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(board, Vector2i(5, 0), Enemy.Kind.HOTDOG, h.player)
+	enemy.stun(90.0)
+
 	h.player.place(Vector2i(4, 0))
 	h.player.facing = 1
+	check(board.floor_below(Vector2i(4, 0)), "the chef starts on a platform")
 	h.tap(&"jump")
 	await h.frames(4)
-	check(h.player.state == Player.St.JUMP or h.player.cell.x == 5,
+	check(h.player.state == Player.St.JUMP or h.player.cell.x == 6,
 		"the jump starts")
-	await h.frames(30)
-	check(h.player.cell.x == 5, "the jump covers one cell", "x is %d" % h.player.cell.x)
+	await h.until(func() -> bool: return h.player.state == Player.St.WALK, 2.0)
+	check(h.player.cell.x == 6, "the jump clears the cell in front",
+		"x is %d" % h.player.cell.x)
 	check(h.player.cell.y == 0, "and does not change row", "y is %d" % h.player.cell.y)
-	check(h.player.state == Player.St.WALK, "and it ends standing")
+	check(h.player.state == Player.St.WALK, "and it ends standing",
+		"state is %d" % h.player.state)
+	check(h.player.cell != enemy.cell, "so the chef does not land on the nasty",
+		"both at %s" % str(h.player.cell))
+
+	# With nothing under him the chef is already falling; he must not jump.
+	h.player.place(Vector2i(4, 5))
+	h.player.facing = 1
+	check(not board.floor_below(Vector2i(4, 5)), "these cells are in mid-air")
+	h.tap(&"jump")
+	await h.frames(10)
+	check(not h.player.moving, "a chef in mid-air cannot jump")
+
+	# A ladder is not a launch pad, even with a ledge under it, so he cannot leap
+	# sideways off a rung.
+	var ladder_cell := Vector2i(4, 0)
+	board._set_tile(ladder_cell, Board.Tile.LADDER)
+	h.player.place(ladder_cell)
+	h.player.facing = 1
+	h.tap(&"jump")
+	await h.frames(10)
+	check(h.player.cell == ladder_cell, "no jump sideways off a ladder",
+		"ended at %s" % str(h.player.cell))
 	h.teardown()
 
 
@@ -1363,22 +1397,68 @@ func _test_riding_a_part() -> void:
 		return
 
 	var ing := _add_ingredient(h, board, "m", 5, 3, 6)
+	# A nasty rides a part by standing on top of it, so it sits a row above the
+	# part, not level with it.
 	var enemy := Enemy.new()
 	h.game_node.add_child(enemy)
-	enemy.setup(board, Vector2i(6, 6), Enemy.Kind.PICKLE, h.player)
+	enemy.setup(board, Vector2i(6, 5), Enemy.Kind.PICKLE, h.player)
 	check(enemy.riding(ing), "the nasty is standing on the part")
 
-	# One knock would take this part from row 6 to the row 9 ledge. A nasty riding
-	# it buys a second drop, so it goes all the way to the ground instead.
-	ing.knock()
-	await h.until(func() -> bool: return not ing.falling)
-	check(ing.rest_row == 9, "a part on its own falls one storey",
-		"row is %d" % ing.rest_row)
+	# A part level with the nasty is beside it, not underfoot, so it is not a
+	# ride. This is the off-by-one that used to make the whole mechanic dead.
+	var beside := _add_ingredient(h, board, "l", 2, 5, 5)
+	check(not enemy.riding(beside), "a part level with the nasty is not underfoot")
 
+	# The chef's crossing attaches the rider before it knocks the part, so the
+	# nasty is carried down instead of being flattened by the part leaving.
+	enemy.attach(ing)
 	ing.knock(1)
-	await h.until(func() -> bool: return not ing.falling)
-	check(ing.rest_row == Cfg.GRID_H - 2, "and with a rider it falls two",
-		"row is %d" % ing.rest_row)
+	check(enemy.state == Enemy.St.RIDE, "the nasty is carried down",
+		"state is %d" % enemy.state)
+	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH, 3.0)
+	h.teardown()
+
+
+## The whole point of the ride is that it happens while you play: the chef walks
+## across a part a nasty is standing on, and the nasty goes down with it. This
+## drives the game's own crossing handler, so the mechanic is checked through the
+## path a player actually takes rather than by calling the enemy's methods.
+func _test_crossing_a_part_carries_the_nasty() -> void:
+	_begin("crossing a part carries the nasty")
+	var h := _Harness.new(self)
+	var g := await h.start_game(0)
+	if g == null:
+		return
+	g._enter(Game.Phase.PLAYING)
+	await h.frame()
+
+	# Any part with a free cell above it will do; put a nasty on that cell so it
+	# is standing on the part, and freeze the level's own nasties out of the way.
+	var ing: Ingredient = null
+	for candidate in g.get_tree().get_nodes_in_group(&"ingredients"):
+		var c := candidate as Ingredient
+		if c != null and g.board.ingredient_at(c.cells[0]) == c \
+				and not g.board.blocks_player(c.cells[0] + Vector2i.UP):
+			ing = c
+			break
+	if ing == null:
+		check(false, "a level 1 part with room to stand a nasty on top of it")
+		h.teardown()
+		return
+
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.add_to_group(&"enemies")
+	enemy.setup(g.board, ing.cells[0] + Vector2i.UP, Enemy.Kind.HOTDOG, g.player)
+	check(enemy.riding(ing), "the nasty is standing on the part")
+
+	# The chef walks the full width, which is the crossing the game listens for.
+	g._on_crossed(ing)
+	check(enemy.state == Enemy.St.RIDE, "the crossing puts the nasty on the ride",
+		"state is %d" % enemy.state)
+	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH, 6.0)
+	check(enemy.state == Enemy.St.SQUASH, "and the part crushes it on the way down",
+		"state is %d" % enemy.state)
 	h.teardown()
 
 

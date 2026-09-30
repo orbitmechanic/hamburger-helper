@@ -158,12 +158,37 @@ func _climb(dir: Vector2i) -> void:
 func _can_jump() -> bool:
 	if state == St.CLIMB:
 		return false
-	return not board.blocks_player(cell + Vector2i(facing, 0))
+	# A jump is a push off a platform, not a leap off a ladder rung. Both halves
+	# matter: a ladder cell is not a launch pad even when there is a ledge below
+	# it, and a chef with nothing under him is already falling.
+	if board.is_ladder(cell) or not board.floor_below(cell):
+		return false
+	return _jump_landing() != Vector2i.ZERO
+
+
+## Where a jump puts the chef down. The hop clears the cell in front of him rather
+## than landing in it, which is the whole point: the chef used to hop exactly one
+## cell, so a nasty in the next cell caught him as he came down and the jump could
+## never get him over anything. Carrying the hop to the far side of that cell is
+## what makes it a dodge. A wall right in front cancels it; a wall on the far side
+## shortens it rather than cancelling it, so a jump beside a wall is still a jump.
+func _jump_landing() -> Vector2i:
+	var one := cell + Vector2i(facing, 0)
+	if board.blocks_player(one):
+		return Vector2i.ZERO
+	var two := cell + Vector2i(facing * 2, 0)
+	if not board.blocks_player(two):
+		return two
+	return one
 
 
 func _begin_jump() -> void:
+	var landing := _jump_landing()
+	# The longer hop is given more time, but not twice as much, so clearing a
+	# nasty reads as one quick push-off rather than a slow drift across the floor.
+	var dist := absi(landing.x - cell.x)
 	state = St.JUMP
-	begin_step(cell + Vector2i(facing, 0), JUMP_DUR)
+	begin_step(landing, JUMP_DUR * (1.0 + 0.4 * float(dist - 1)))
 
 
 func _start_fall() -> void:
