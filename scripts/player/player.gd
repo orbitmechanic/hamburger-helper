@@ -42,6 +42,14 @@ var _covered := {}
 var _anim := 0.0
 
 
+## A fixed pose the level has put the chef in, or -1 for none. See `set_pose`.
+var pose_anim := -1
+
+## How far through a posed animation the chef is, 0 to 1. The level owns this clock
+## for the poses it sets, because the chef is not processing while they play.
+var pose_progress := 1.0
+
+
 func setup(p_board: Board, start: Vector2i) -> void:
 	board = p_board
 	place(start)
@@ -60,6 +68,10 @@ func place(at: Vector2i) -> void:
 	_covered.clear()
 	moving = false
 	state = St.WALK
+	# A chef who is standing somewhere is playing, so whatever the level had him
+	# doing on the way to that spot is over. Without this a respawn would put him
+	# back on the board still wearing the pose he went down in.
+	clear_pose()
 
 
 func _process(delta: float) -> void:
@@ -312,10 +324,17 @@ func draw_chef() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-## Which animation the chef is in. Climbing is its own animation with no eyes in
-## it, which is why the old code no longer has to fake a facing of zero here -
-## and why `facing` is left alone, since movement reads it too.
+## Which animation the chef is in.
+##
+## A pose set by the level outranks everything, because the moments the level needs
+## one are the ones where the chef is not driving himself: he cannot be spraying
+## seasoning on the way in through a parachute or celebrating a cleared level. The
+## spray is second, and reads as a punch for as long as the puff is in the air.
 func anim_state() -> int:
+	if pose_anim >= 0:
+		return pose_anim
+	if spray_time > 0.0:
+		return Sheet.Anim.PUNCH
 	match state:
 		St.CLIMB:
 			return Sheet.Anim.CLIMB
@@ -325,9 +344,40 @@ func anim_state() -> int:
 			return Sheet.Anim.WALK if moving else Sheet.Anim.IDLE
 
 
-## Frame within the current animation. Walking and climbing are played off the
-## step so the feet keep pace with the movement; the rest run on the clock.
+## Frame within the current animation.
+##
+## The stepping animations are played off the step, so the feet keep pace with the
+## movement, and the jump comes along for it: the hop is a single step, so a jump
+## plays its tuck on the way up and its reach on the way down, which is a better
+## read than a loop of four frames that keeps playing after he has landed. The spray
+## plays the punch out over the puff, and a pose plays off the clock the level
+## hands it.
 func anim_frame(anim: int) -> int:
-	if anim == Sheet.Anim.WALK or anim == Sheet.Anim.CLIMB:
+	if pose_anim >= 0 and anim == pose_anim:
+		return Sheet.frame_at_phase(anim, pose_progress)
+	if anim == Sheet.Anim.PUNCH:
+		return Sheet.frame_at_phase(anim, 1.0 - spray_time / SPRAY_TIME)
+	if anim == Sheet.Anim.WALK or anim == Sheet.Anim.CLIMB or anim == Sheet.Anim.JUMP:
+		# A fall is one cell and about four frames of real time, so playing a
+		# four-frame arc across it would strobe rather than read. A fall holds the
+		# reach: the chef is dropping, not hopping.
+		if anim == Sheet.Anim.JUMP and state == St.FALL:
+			return Sheet.frame_at_phase(anim, 1.0)
 		return Sheet.frame_at_phase(anim, step_phase())
 	return Sheet.frame_of(anim, _anim)
+
+
+## Put the chef in a fixed pose instead of what he is doing, for the moments the
+## level rather than the player is in charge. `progress` runs 0 to 1 through an
+## animation and is ignored for a single frame.
+func set_pose(anim: int, progress: float = 1.0) -> void:
+	pose_anim = anim
+	pose_progress = progress
+	queue_redraw()
+
+
+## Hand the chef back to himself.
+func clear_pose() -> void:
+	pose_anim = -1
+	pose_progress = 1.0
+	queue_redraw()

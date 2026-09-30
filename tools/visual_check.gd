@@ -28,12 +28,16 @@ const SHOT_DIR_DEFAULT := "/tmp/hamburger-helper"
 ## panel, and the platform tan. Chosen from Cfg, not hardcoded twice.
 const HUD_TEXT := Cfg.COL_PLATE
 const PLATFORM := Cfg.COL_PLATFORM
-## The chef's shirt. The characters are the only things on screen drawn out of a
-## texture rather than a flat rect, so they are the only thing that can go missing
-## without a colour count noticing: a sheet that failed to load would leave an
-## empty cell and the level would still be "drawn".
-const CHEF_SHIRT := Cfg.PLAYER_COOK_SHIRT
-const CHEF_PANTS := Cfg.PLAYER_COOK_PANTS
+## The chef's hat and apron, and his inked outline, read off his own sheet. The
+## characters are the only things on screen drawn out of a texture rather than a
+## flat rect, so they are the only thing that can go missing without a colour count
+## noticing: a sheet that failed to load would leave an empty cell and the level
+## would still be "drawn". Two colours rather than one, because they fail
+## differently - the hat is the largest shape on him and catches a sheet that is
+## missing or the wrong size, and the ink catches one that imported without its
+## outline, which still draws a recognisable chef in the wrong place.
+const CHEF_HAT := ChefArt.COL_HAT
+const CHEF_INK := ChefArt.COL_LINE
 ## Smallest share of the image each thing may cover. The HUD and the card panel
 ## are set from what the real captures draw, with roughly half again as much
 ## margin as the thinnest one. The level share is deliberately not set that way:
@@ -44,15 +48,19 @@ const CHEF_PANTS := Cfg.PLAYER_COOK_PANTS
 const MIN_HUD_SHARE := 0.0015
 const MIN_CARD_SHARE := 0.05
 const MIN_LEVEL_SHARE := 0.12
-## The chef is 14 by 18 pixels in a 256x240 frame, so about 0.4% of it, and his
-## shirt is most of that. The floor sits under the measured share so a frame caught
-## mid-stride, or facing the other way, still passes.
-const MIN_CHEF_SHARE := 0.0015
-## The trousers are four rows of four pixels per leg, and a walk frame has one leg
-## in the air, so this is low on purpose: the check is there to catch legs that are
-## not drawn at all, which is a real way for the sheet to be wrong, and not to pin
-## down how much trouser there is.
-const MIN_CHEF_LEGS_SHARE := 0.0002
+## The chef is 16 by 24 pixels in a 256x240 frame, so about 0.6% of it, and his
+## hat and apron are most of that. The floor is set from the thinnest frame he owns
+## rather than from whichever one a capture happened to catch: across his whole
+## sheet the thinnest is 38 pixels of hat, and these sit at about half that, so any
+## frame passes and a chef who is missing, blank or a third drawn still fails. The
+## three play captures all catch the same frame, which is why reading the threshold
+## off one of them alone would pin it to a stride that is not the worst case.
+const MIN_CHEF_SHARE := 0.0003
+## The outline is a couple of rows of pixels around the whole figure, thinnest at
+## 18 pixels, so the floor is low on purpose: the check is there to catch an import
+## that lost the ink, which is a real way for a sheet to be wrong, and not to pin
+## down how much of him is edge.
+const MIN_CHEF_INK_SHARE := 0.00015
 
 ## How far a channel may drift and still count. Godot's own capture path and the
 ## X11 one that preceded it can land on adjacent values around a flat fill.
@@ -100,8 +108,8 @@ func _run() -> void:
 	# rather than with flat rects. A sheet that is missing, mislaid or the wrong
 	# size leaves him invisible, which no other check here would see.
 	for shot in ["03-level1-play", "04-level2-play", "05-level3-play"]:
-		_check_share("%s draws the chef" % shot, shot, CHEF_SHIRT, MIN_CHEF_SHARE)
-		_check_share("%s draws his trousers" % shot, shot, CHEF_PANTS, MIN_CHEF_LEGS_SHARE)
+		_check_share("%s draws the chef" % shot, shot, CHEF_HAT, MIN_CHEF_SHARE)
+		_check_share("%s draws him inked" % shot, shot, CHEF_INK, MIN_CHEF_INK_SHARE)
 
 	# A frame that is only background means the level failed to build or draw.
 	for shot in ["03-level1-play", "04-level2-play", "05-level3-play"]:
