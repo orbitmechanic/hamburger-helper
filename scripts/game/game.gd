@@ -195,15 +195,10 @@ func _process_bonuses(delta: float) -> void:
 
 func _collect(bonus: Bonus) -> void:
 	match bonus.kind:
-		Bonus.Kind.PEPPER:
+		Bonus.Kind.PEPPER, Bonus.Kind.SALT:
 			player.add_pepper(bonus.charges())
 			GameState.add_score(Food.POINTS_PEPPER)
-			_popup("PEPPER", Cfg.COL_PEPPER)
-		Bonus.Kind.STUN:
-			for e in get_tree().get_nodes_in_group(&"enemies"):
-				(e as Enemy).stun(bonus.stun_seconds())
-			GameState.add_score(Food.POINTS_STUN)
-			_popup("STUN!", Cfg.COL_PEPPER)
+			_popup(bonus.label(), Cfg.COL_PEPPER)
 		Bonus.Kind.LIFE:
 			GameState.add_chef()
 			_popup("1UP", Cfg.COL_BONUS)
@@ -233,52 +228,57 @@ func _random_walk_row_cell() -> Vector2i:
 
 func _random_bonus_kind() -> Bonus.Kind:
 	var roll := randf()
-	if roll < 0.6:
+	if roll < 0.45:
 		return Bonus.Kind.PEPPER
 	if roll < 0.9:
-		return Bonus.Kind.STUN
+		return Bonus.Kind.SALT
 	return Bonus.Kind.LIFE
 
 
-## Pepper is fired, not automatic.
+## How long a nasty stays frozen by a dose. Long enough to walk away from it
+## and do something else, short enough that it is not gone for the rest of the
+## level.
+const SPRAY_STUN_TIME := 5.0
+
+
+## Seasoning is a forward spray the chef throws himself.
 ##
-## Spending a charge on whichever nasty the chef happened to brush past made the
-## jars a resource the player never chose how to use, and the common case was
-## wasting one on a nasty who was about to walk off the ledge anyway. So the
-## chef throws it himself: the key ghosts him for a moment, and the first nasty
-## he touches inside that window is the one that gets zapped. Pressing it with
-## nothing left says so rather than doing nothing quietly.
+## Two earlier shapes were wrong for a player. Making the jar freeze every nasty
+## the moment it was picked up took the timing out of the player's hands - the
+## board paused itself, and the jar decided the moment rather than the player. And
+## spending a charge to shimmer until something walked into the chef wasted the
+## dose on whichever nasty happened to be nearest, which is rarely the one the
+## player was aiming at. So a dose is now aimed: the key throws it the way the
+## chef is facing, and whatever the spray reaches is frozen for a count-down.
+## One charge is one shot, and with an empty jar the key says so.
 func _fire_pepper() -> void:
 	if player == null or not is_instance_valid(player):
 		return
 	if not Input.is_action_just_pressed(&"pepper"):
 		return
-	if not player.use_pepper():
+	if not player.spend_pepper():
 		_popup("NO PEPPER", Cfg.COL_PLATE)
 		return
-	_popup("PEPPER!", Cfg.COL_PEPPER)
+	var spray := player.spray_rect()
+	var hit := 0
+	for e in get_tree().get_nodes_in_group(&"enemies"):
+		var enemy := e as Enemy
+		if enemy != null and is_instance_valid(enemy) and spray.intersects(enemy.hit_rect()):
+			enemy.stun(SPRAY_STUN_TIME)
+			hit += 1
+	_popup("SPRAY!" if hit == 0 else "ZAP x%d" % hit, Cfg.COL_PEPPER)
 
 
 # --- Loss ------------------------------------------------------------------
 
 
-## Runs the contact check. Kept out of the enemy so that the pepper rule lives
-## in one place: a ghosted chef cannot be caught, and a stunned nasty cannot
-## catch him even without pepper.
+## Runs the contact check. The seasoning spray freezes a nasty for five seconds
+## rather than removing it, so a frozen nasty must not be able to catch the chef
+## either.
 func _check_catches() -> void:
 	if phase != Phase.PLAYING or player == null or not is_instance_valid(player):
 		return
 	if player.state == Player.St.JUMP:
-		return
-	if player.ghost():
-		# A thrown pepper has already been paid for by the key press, so the
-		# nasty that runs into the shimmer is stunned and no charge is spent.
-		for e in get_tree().get_nodes_in_group(&"enemies"):
-			var enemy := e as Enemy
-			if enemy != null and is_instance_valid(enemy) and _touching(enemy):
-				enemy.stun()
-				_popup("ZAP!", Cfg.COL_PEPPER)
-				return
 		return
 	for e in get_tree().get_nodes_in_group(&"enemies"):
 		var enemy := e as Enemy

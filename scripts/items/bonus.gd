@@ -2,14 +2,16 @@ class_name Bonus
 extends Node2D
 ## A pickup that appears on a walk row and is taken by walking into it.
 ##
-## Pepper is the important one: in the original it appears at a random spot on
-## the board, and picking it up arms the chef so the next nasty he touches is
-## stunned rather than fatal. The jar in the HUD shows charges, and a level can
-## start with one already in it.
+## Seasoning is the important one: it appears at a random spot on the board and
+## picking a jar up puts one charge in the chef's jar. The jar in the HUD shows
+## the charges, and a level can start with one already in it. There is no
+## whole-board effect on pickup - freezing everything the moment a jar is touched
+## took the timing out of the player's hands, so every jar is simply ammo for the
+## forward spray, and the player decides when to spend it.
 
 signal collected(kind: Kind)
 
-enum Kind { PEPPER, STUN, LIFE }
+enum Kind { PEPPER, SALT, LIFE }
 
 const LIFE_TIME := 9.0
 const POINTS := 500
@@ -28,20 +30,15 @@ func setup(at: Vector2i, p_kind: Kind) -> void:
 	queue_redraw()
 
 
-## How many pepper charges this is worth, for the HUD.
+## How many seasoning charges this is worth, for the HUD.
 func charges() -> int:
-	return 1 if kind == Kind.PEPPER else 0
-
-
-## Seconds of stun a STUN bonus applies to every nasty on the board.
-func stun_seconds() -> float:
-	return 5.0 if kind == Kind.STUN else 0.0
+	return 0 if kind == Kind.LIFE else 1
 
 
 func label() -> String:
 	match kind:
-		Kind.STUN:
-			return "STUN"
+		Kind.SALT:
+			return "SALT"
 		Kind.LIFE:
 			return "1UP"
 		_:
@@ -64,11 +61,11 @@ func _draw() -> void:
 	var box := Rect2(-5, -6, 10, 12)
 	draw_rect(box.grow(1.0), Cfg.COL_OUTLINE)
 	match kind:
-		Kind.STUN:
-			# A jar with a star on it: the whole-board stun.
-			draw_rect(box, Cfg.COL_PEPPER.darkened(0.2))
-			draw_rect(Rect2(-1, -4, 2, 8), Cfg.COL_OUTLINE)
-			draw_rect(Rect2(-4, -1, 8, 2), Cfg.COL_OUTLINE)
+		Kind.SALT:
+			# A salt shaker, another dose of the same seasoning spray.
+			draw_rect(box, Color("dfe3e8"))
+			draw_rect(Rect2(-1, -6, 2, 3), Cfg.COL_OUTLINE)
+			draw_rect(Rect2(-4, -1, 8, 2), Cfg.COL_OUTLINE.darkened(0.3))
 		Kind.LIFE:
 			# A little chef's hat for a spare life.
 			draw_rect(Rect2(-5, 0, 10, 6), Cfg.PLAYER_COOK_SHIRT)

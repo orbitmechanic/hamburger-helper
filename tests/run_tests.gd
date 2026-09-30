@@ -660,7 +660,8 @@ func _test_food_lands_on_a_ledge() -> void:
 	h.teardown()
 
 
-## The chain: knocking the top of a column moves the lot.
+## The chain: knocking the top of a column walks it down one storey, and doing
+## that repeatedly walks it onto the plate.
 func _test_chain_reaction() -> void:
 	_begin("chain reaction")
 	var h := _Harness.new(self)
@@ -675,9 +676,25 @@ func _test_chain_reaction() -> void:
 
 	top.knock()
 	await h.frames(20)
-	check(not is_instance_valid(top) or top.falling, "the top part is on its way down")
+	check(board.stack(0).size() == 2, "one knock puts exactly the bottom part on the plate",
+		"stack is %s" % str(board.stack(0)))
+	check(mid.rest_row == 9, "the next part down takes the vacated row",
+		"mid stopped at row %d" % mid.rest_row)
+	check(top.rest_row == 6, "and the lid follows down one storey",
+		"lid stopped at row %d" % top.rest_row)
+
+	# Every knock walks the surviving column down one storey; three knocks in all
+	# finish the burger, and the order comes out right.
+	for i in 3:
+		if Food.stack_is_burger(board.stack(0)):
+			break
+		var head := _column_top(board, 0)
+		if head == null:
+			break
+		head.knock()
+		await h.frames(20)
 	check(Food.stack_is_burger(board.stack(0)),
-		"the whole column lands and builds a burger",
+		"repeated knocks build the burger",
 		"stack is %s" % str(board.stack(0)))
 	var order := board.stack(0)
 	check(order.size() == 4, "every part reached the plate", "stack size is %d" % order.size())
@@ -688,8 +705,26 @@ func _test_chain_reaction() -> void:
 	h.teardown()
 
 
+## The highest part left standing in a plate's column, the thing the chef would
+## cross next. Scans the board rather than the "ingredients" group, which only
+## the Game populates.
+func _column_top(board: Board, plate_index: int) -> Ingredient:
+	var plate := board.plates[plate_index]
+	var parts: Array[Ingredient] = []
+	for y in Cfg.GRID_H:
+		for x in range(plate.x, plate.right() + 1):
+			var ing := board.ingredient_at(Vector2i(x, y))
+			if ing != null and not parts.has(ing):
+				parts.append(ing)
+	if parts.is_empty():
+		return null
+	parts.sort_custom(func(a: Ingredient, b: Ingredient) -> bool: return a.rest_row < b.rest_row)
+	return parts[0]
+
+
 ## The same thing driven by the chef rather than by a direct knock, which is the
-## path a player actually takes.
+## path a player actually takes: one crossing is one storey, so the chef walks
+## the column down onto the plate one push at a time.
 func _test_column_builds_a_burger() -> void:
 	_begin("chef builds a burger")
 	var h := _Harness.new(self)
@@ -701,16 +736,21 @@ func _test_column_builds_a_burger() -> void:
 	_add_ingredient(h, board, "m", 1, 2, 9)
 	_add_ingredient(h, board, "l", 1, 2, 6)
 	_add_ingredient(h, board, "t", 1, 2, 3)
-	# Start beside the lid, not on it, so the crossing is walked end to end.
-	h.player.place(Vector2i(0, 3))
 
-	# Walk right across both of the lid's cells and off the end of it.
-	h.hold(&"move_right")
-	await h.frames(120)
-	h.release(&"move_right")
-	await h.frames(30)
+	for i in 5:
+		if Food.stack_is_burger(board.stack(0)):
+			break
+		var head := _column_top(board, 0)
+		if head == null:
+			break
+		# Start beside the part, not on it, so the crossing is walked end to end.
+		h.player.place(Vector2i(head.cells[0].x - 1, head.rest_row))
+		h.hold(&"move_right")
+		await h.frames(120)
+		h.release(&"move_right")
+		await h.frames(40)
 
-	check(Food.stack_is_burger(board.stack(0)), "walking across the lid builds the burger",
+	check(Food.stack_is_burger(board.stack(0)), "walking crossings builds the burger",
 		"stack is %s" % str(board.stack(0)))
 	h.teardown()
 
@@ -828,12 +868,13 @@ func _test_pepper_stuns_a_nasty() -> void:
 	h.game_node.add_child(enemy)
 	enemy.setup(board, Vector2i(5, 13), Enemy.Kind.EGG, h.player)
 
-	check(not h.player.ghost(), "the chef starts solid")
 	h.player.add_pepper(2)
 	check(h.player.pepper_left == 2, "pepper goes in the jar")
-	check(h.player.use_pepper(), "and can be spent")
-	check(h.player.ghost(), "spending it makes the chef pass through")
-	check(not h.player.use_pepper() or h.player.pepper_left == 0, "each charge is one use")
+	check(h.player.spend_pepper(), "and can be spent")
+	check(h.player.pepper_left == 1, "spending one leaves the other",
+		"%d left" % h.player.pepper_left)
+	check(h.player.spend_pepper() and not h.player.spend_pepper(),
+		"an empty jar cannot pay for a shot")
 
 	enemy.stun(3.0)
 	check(enemy.state == Enemy.St.STUN, "a stung nasty stops")
@@ -1172,55 +1213,62 @@ func _test_pepper_is_fired_by_a_key() -> void:
 	var player := g.player
 
 	player.pepper_left = 0
-	player.pepper_time = 0.0
-	check(not player.ghost(), "the chef starts solid")
 
 	# The key with an empty jar does nothing at all, and says so.
 	Input.action_press(&"pepper")
 	await h.frame()
 	Input.action_release(&"pepper")
 	await h.frame()
-	check(not player.ghost(), "pressing pepper with an empty jar does nothing")
-	check(_last_popup(g) == "NO PEPPER", "and the chef is told why",
+	check(_last_popup(g) == "NO PEPPER", "pressing pepper with an empty jar says so",
 		"popup was %s" % _last_popup(g))
 
-	# With a charge in the jar, the key opens the window.
+	# A nasty to aim at: one cell in front of the chef, inside a spray's reach.
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.add_to_group(&"enemies")
+	enemy.setup(g.board, player.cell + Vector2i.RIGHT, Enemy.Kind.HOTDOG, player)
+	player.facing = 1
+
+	# With a charge in the jar, the key throws the dose and the nasty it reaches
+	# is frozen.
+	player.add_pepper(2)
+	Input.action_press(&"pepper")
+	await h.frame()
+	Input.action_release(&"pepper")
+	await h.frame()
+	check(player.pepper_left == 1, "the key spends one charge",
+		"%d left" % player.pepper_left)
+	check(enemy.state == Enemy.St.STUN, "a nasty in front of the chef is frozen",
+		"state is %d" % enemy.state)
+
+	# The freeze is a count-down, not a permanent removal.
+	check(enemy._timer > 4.0, "for about five seconds",
+		"timer is %.1f" % enemy._timer)
+	await h.until(func() -> bool: return enemy.state != Enemy.St.STUN, 8.0)
+	check(enemy.state != Enemy.St.STUN, "and then it starts walking again",
+		"state is %d" % enemy.state)
+
+	# The spray only goes the way the chef is facing, so a nasty behind him is
+	# safe from a shot thrown forwards.
+	enemy.place(player.cell + Vector2i.LEFT)
+	player.facing = 1
 	player.add_pepper(1)
 	Input.action_press(&"pepper")
 	await h.frame()
 	Input.action_release(&"pepper")
 	await h.frame()
-	check(player.ghost(), "the pepper key makes the chef shimmer")
-	check(player.pepper_left == 0, "and spends a charge",
-		"%d left" % player.pepper_left)
-	check(_last_popup(g) == "PEPPER!", "with a confirmation")
-
-	# A nasty that walks into the shimmer is stunned, and the dose already paid
-	# for is not charged twice. The check is driven directly rather than left to
-	# a frame of game time, so it cannot lose a race with the nasty's own
-	# movement or with the five second dose running out.
-	var enemy := Enemy.new()
-	h.game_node.add_child(enemy)
-	enemy.add_to_group(&"enemies")
-	enemy.setup(g.board, player.cell + Vector2i.RIGHT, Enemy.Kind.HOTDOG, player)
-	player.pepper_time = Player.PEPPER_TIME
-
-	# A nasty in the next cell over is not touching him. This is the case the old
-	# cell check got wrong in the direction that mattered: the chef could be caught
-	# with a cell of empty floor drawn on screen between him and the nasty.
-	enemy.place(player.cell + Vector2i.RIGHT)
-	g._check_catches()
-	check(enemy.state != Enemy.St.STUN, "a nasty in the next cell along is not touching",
+	check(enemy.state != Enemy.St.STUN, "a nasty behind the chef is not sprayed",
 		"state is %d" % enemy.state)
-	check(not g._touching(enemy), "and their boxes do not overlap")
 
-	# A nasty on the chef's own cell is.
-	enemy.place(player.cell)
-	g._check_catches()
-	check(enemy.state == Enemy.St.STUN, "a nasty on top of the shimmer is stunned",
+	# And it does not reach the whole board.
+	enemy.place(player.cell + Vector2i(player.facing * 4, 0))
+	player.add_pepper(1)
+	Input.action_press(&"pepper")
+	await h.frame()
+	Input.action_release(&"pepper")
+	await h.frame()
+	check(enemy.state != Enemy.St.STUN, "a nasty four cells away is out of reach",
 		"state is %d" % enemy.state)
-	check(player.pepper_left == 0, "zapping does not spend a second charge",
-		"%d left" % player.pepper_left)
 
 	h.teardown()
 
@@ -1291,6 +1339,17 @@ func _test_falling_food_squashes() -> void:
 	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH)
 	check(enemy.state == Enemy.St.SQUASH, "a nasty under falling food is flattened",
 		"state is %d" % enemy.state)
+
+	# A flattened nasty lies still, and does not come back almost at once: the
+	# count-down is long enough to read as "out of play" and to give the chef a
+	# real window of work.
+	check(enemy._timer > 3.0, "and stays down for several seconds",
+		"timer is %.1f" % enemy._timer)
+	await h.until(func() -> bool: return enemy.state != Enemy.St.SQUASH, 8.0)
+	check(enemy.state != Enemy.St.SQUASH, "then it comes back into play",
+		"state is %d" % enemy.state)
+	check(enemy.cell == enemy.home_cell, "on the ledge it started on",
+		"at %s, home %s" % [str(enemy.cell), str(enemy.home_cell)])
 	h.teardown()
 
 
@@ -1360,22 +1419,24 @@ func _test_burger_completes_the_level() -> void:
 	var target := g.level.plates.size()
 	check(GameState.burgers_target == target, "the level knows how many burgers it wants")
 
-	# Drive every part of the first column onto its plate, from the top down.
+	# Drive every part of the first column onto its plate. A knock walks the
+	# column down a storey, so keep knocking whatever is currently on top until
+	# the burger is done.
 	var board := g.board
 	var plate_x := g.level.plates[0].x
-	var column: Array = []
-	for ing in g.level.ingredients:
-		if ing.overlaps(g.level.plates[0]):
-			column.append(ing)
-	column.sort_custom(func(a: LevelData.Span, b: LevelData.Span) -> bool: return a.y < b.y)
-	check(not column.is_empty(), "the first plate has a column of parts to drop")
-
-	for span in column:
-		var live := board.ingredient_at(Vector2i(span.x, span.y))
-		if live != null:
-			live.knock()
-		await _frame()
-		await _frame()
+	for i in 8:
+		if Food.stack_is_burger(board.stack(plate_x)):
+			break
+		var head := _column_top(board, 0)
+		if head == null:
+			break
+		head.knock()
+		# Wait for the fall to settle, or the next knock is ignored as still
+		# falling.
+		for f in 40:
+			if not is_instance_valid(head) or not head.falling:
+				break
+			await _frame()
 	check(Food.stack_is_burger(board.stack(plate_x)),
 		"dropping the column top-down builds the burger", "stack is %s" % str(board.stack(plate_x)))
 	check(GameState.burgers_done == 1, "and scores it", "counted %d" % GameState.burgers_done)
@@ -1549,6 +1610,9 @@ class _Harness:
 		player = Player.new()
 		game_node.add_child(player)
 		player.setup(board, board.chef_spawn)
+		# Production lets the Game decide what a crossing does; the harness stands
+		# in for it with the same knock and no riders.
+		player.crossed.connect(func(ing: Ingredient) -> void: ing.knock())
 		await frame()
 
 	## A real Game node, for testing level flow.

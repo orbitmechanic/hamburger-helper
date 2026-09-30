@@ -17,13 +17,12 @@ const JUMP_DUR := 0.17
 ## Peak of the hop, in pixels. A one-cell hop that clears an enemy but not much
 ## more: the jump is a dodge, not a way to climb a storey.
 const JUMP_LIFT := 13.0
-const PEPPER_TIME := 5.0
 
 var facing := 1
 var state: St = St.WALK
-## Pepper charges in the jar, and how long the current dose lasts.
+## Seasoning charges in the jar, and how long the current spray is drawn for.
 var pepper_left := 0
-var pepper_time := 0.0
+var spray_time := 0.0
 
 ## The ingredient currently being walked over, and which of its cells have been
 ## covered. A part is only pushed when every one of them has been.
@@ -56,8 +55,8 @@ func place(at: Vector2i) -> void:
 
 func _process(delta: float) -> void:
 	_anim += delta
-	if pepper_time > 0.0:
-		pepper_time = maxf(pepper_time - delta, 0.0)
+	if spray_time > 0.0:
+		spray_time = maxf(spray_time - delta, 0.0)
 	_drive()
 	var done := tick_step(delta)
 	# The hop arc is applied on top of the linear cell-to-cell interpolation, so
@@ -68,24 +67,38 @@ func _process(delta: float) -> void:
 		_arrived()
 
 
-## Whether enemies should pass harmlessly through him right now.
-func ghost() -> bool:
-	return pepper_time > 0.0
+## How long a thrown dose is drawn for, so the spray is visible on the way out.
+const SPRAY_TIME := 0.18
+## How far a dose reaches in front of the chef, in cells: about a character and a
+## half. Close enough to zap the nasty he is being chased by, short enough that he
+## has to commit to a direction rather than paint the whole floor.
+const SPRAY_REACH := 1.5
+
+
+## Takes one charge out of the jar for a spray the chef is about to throw.
+## Returns false when the jar is empty, which the caller reports rather than
+## silently doing nothing.
+func spend_pepper() -> bool:
+	if pepper_left <= 0:
+		return false
+	pepper_left -= 1
+	spray_time = SPRAY_TIME
+	return true
+
+
+## The box a thrown dose covers: out in front of the chef, from his own edge to
+## SPRAY_REACH cells away, one cell deep vertically. World pixels, like every
+## other body box in the game, so it is compared against the nasties' own boxes.
+func spray_rect() -> Rect2:
+	var reach := Cfg.TILE * SPRAY_REACH
+	var h := Cfg.TILE * 0.6
+	var from_x := position.x + float(facing) * Cfg.TILE * 0.4
+	var to_x := position.x + float(facing) * reach
+	return Rect2(minf(from_x, to_x), position.y - h * 0.5, absf(to_x - from_x), h)
 
 
 func add_pepper(charges: int = 1) -> void:
 	pepper_left += charges
-
-
-## Throws a pepper dose. The caller is the game, on the pepper key: the chef
-## shimmers for PEPPER_TIME and the first nasty he touches in that window is
-## stunned, so spending a charge is always the player's decision.
-func use_pepper() -> bool:
-	if pepper_left <= 0:
-		return false
-	pepper_left -= 1
-	pepper_time = PEPPER_TIME
-	return true
 
 
 # --- Input -----------------------------------------------------------------
@@ -198,8 +211,11 @@ func _track_crossing() -> void:
 
 func _close_crossing() -> void:
 	if _cross != null and _covered.size() >= _cross.cells.size():
-		crossed.emit(_cross)
-		_cross.knock()
+		var target := _cross
+		_cross = null
+		_covered.clear()
+		crossed.emit(target)
+		return
 	_cross = null
 	_covered.clear()
 
@@ -209,10 +225,23 @@ func _close_crossing() -> void:
 
 func _draw() -> void:
 	draw_chef()
-	# A pepper dose shows as a shimmer, so a ghosted chef is never a mystery.
-	if ghost():
-		draw_rect(Rect2(-7, -11, 14, 14), Cfg.COL_PEPPER, false, 1.0)
+	if spray_time > 0.0:
+		_draw_spray()
 	queue_redraw()
+
+
+## The thrown dose, drawn as a puff of specks thrown out in front of the chef and
+## thinning as it fades, so the player can see how far a shot reached.
+func _draw_spray() -> void:
+	var rect := spray_rect()
+	var left := rect.position.x
+	var f := spray_time / SPRAY_TIME
+	for i in 7:
+		var t := (float(i) + 0.5) / 7.0
+		var x := left + rect.size.x * t
+		var spread := sin(t * PI) * 4.0
+		var y := position.y + sin(float(i) * 2.1) * spread
+		draw_circle(Vector2(x, y), 1.5 + t, Color(Cfg.COL_PEPPER, f * (1.0 - t * 0.5)))
 
 
 ## Blits the current frame of the chef's sheet, mirrored to face the way he is

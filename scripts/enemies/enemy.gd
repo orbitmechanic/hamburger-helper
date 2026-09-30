@@ -38,7 +38,11 @@ const TURN_CHANCE := 0.04
 ## threat is local, and outrunning it is a real option.
 const CHASE_RANGE := 6
 const STUN_TIME := 4.0
-const SQUASH_TIME := 0.6
+## A squashed nasty lies still for this long, then reappears on the ledge it
+## started on. Long enough to read as "flattened, not gone" and to give the chef
+## a real window to work while it is out, rather than blinking back almost at
+## once.
+const SQUASH_TIME := 5.0
 ## A part with a nasty on top drops two levels instead of one. Worth a lot.
 const RIDER_BONUS := 2
 
@@ -339,10 +343,15 @@ func _draw() -> void:
 	if sheet == null:
 		queue_redraw()
 		return
+	# A squashed nasty blinks for the whole of its five seconds so the player can
+	# see it is out of play and about to come back, rather than reading the
+	# flattened sprite as a nasty that has simply stopped.
+	var blink := state == St.SQUASH and fposmod(_timer, 0.6) < 0.35
 	var anim := anim_state()
 	draw_set_transform(Vector2(visual_offset().x, 0.0), 0.0, Vector2(facing, 1.0))
+	var mod := Color(1, 1, 1, 0.35) if blink else Color.WHITE
 	draw_texture_rect_region(sheet, Rect2(Sheet.offset(), Vector2(Sheet.CELL)),
-			Sheet.region(anim, anim_frame(anim)))
+			Sheet.region(anim, anim_frame(anim)), mod)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	queue_redraw()
 

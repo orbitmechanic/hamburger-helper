@@ -26,19 +26,25 @@ fails to compile.
 |--------|------|
 | Move, and climb ladders | Arrow keys or WASD |
 | Jump one cell | Space or X |
-| Throw pepper | F, or the gamepad B button |
+| Spray seasoning | F, or the gamepad B button |
 | Pause | P or Escape |
 | Restart | R |
 
 Walking the **full width** of a part knocks it down one storey, so a three-cell
-patty has to be crossed end to end. If there is another part underneath, that one
-goes too, which is how a column of ingredients is walked down to its plate: start
-at the top and the cascade carries the lot. Parts never stop at a ledge, they fall
-the height of the level, but a burger growing on a plate catches them.
+patty has to be crossed end to end. A part falls one storey at a time: if there is
+another part in the row it is falling into, that part is knocked out of the way
+first and this one takes the row it vacated, so a column cascades down a storey
+per push rather than dropping in one lump. Nothing ever comes to rest on top of
+another part, so a part can never be left stranded in mid-air when the one under
+it moves on. Push from the top and the lot walks down to the plate.
 
-Pepper is thrown with the key, not spent automatically. A charge makes the chef
-shimmer for five seconds and the first nasty that touches the shimmer is stunned;
-the charge is not spent again on the zap.
+Seasoning is ammo, not a board-wide freeze. A pepper or salt jar on the board adds
+one charge to the chef's jar, and the spray key throws a dose about a character and
+a half in front of the chef; every nasty it reaches is frozen for five seconds.
+One charge is one shot, and with an empty jar the key says `NO PEPPER` rather than
+doing nothing quietly. A flattened nasty likewise lies flashing for five seconds
+before returning to the ledge it started on, and cannot catch the chef while it is
+down.
 
 ## Design notes
 

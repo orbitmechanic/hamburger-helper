@@ -63,20 +63,30 @@ func knock(extra_floors: int = 0) -> Dictionary:
 
 
 ## Moves down one level, chaining into whatever is underneath.
+##
+## A knocked part falls exactly one storey. If another part occupies the row it is
+## falling onto, that part is knocked down a level of its own first (so the whole
+## column cascades a storey at a time), and this part then takes the row it
+## vacated. A part therefore never rests on top of another one, and the one with
+## nobody left underneath dives to the plate. That is why pushing the top of a
+## column walks the lot down one storey per knock, and doing it repeatedly walks
+## it onto the plate.
 func _drop() -> Dictionary:
 	var spot := board.landing_spot(cells, support_row)
 	var below: Ingredient = spot.ingredient
 
 	if below != null:
-		# The chain. Knock the part underneath first so that whatever it lands on
-		# is already in place, then come to rest on top of where it ended up.
-		var landed := below.knock()
-		if landed.has("plate"):
-			# It has joined a burger and left the maze, so the way down is open
-			# all the way to the plate. Landing there finishes the burger.
-			return _board(landed["plate"])
-		var r: int = landed["row"]
-		return _relocate(r - 1, r)
+		# Knock the part that is sitting in the landing row out of the way first.
+		# Whatever it lands on is already settled because its own drop did the
+		# same, so the row is empty by the time this part arrives.
+		below.knock()
+		var row: int = spot.row + 1
+		# Only ever downwards. If the part underneath could not be moved, the row
+		# is still occupied and claim() refuses it, so this stays put too rather
+		# than piling up on top.
+		if row <= rest_row:
+			return {"row": rest_row, "support": support_row}
+		return _relocate(row, row + 1)
 
 	if spot.plate != null:
 		return _board(spot.plate)
