@@ -97,8 +97,42 @@ func riding(ing: Ingredient) -> bool:
 	return false
 
 
+## Whether a part is currently falling through this nasty, either over his head or
+## through the cell he is standing in.
+##
+## Both cells count because a part either lands on him or passes through where he is
+## standing, and both flatten him. A rider is excluded by the caller: the part is
+## under him rather than through him, and _tick_ride() flattens him when it lands.
+func _under_falling_food() -> bool:
+	for n in get_tree().get_nodes_in_group(&"ingredients"):
+		var ing := n as Ingredient
+		if ing == null or not is_instance_valid(ing) or not ing.falling:
+			continue
+		var swept := ing.swept_cells()
+		if swept.has(cell) or swept.has(cell + Vector2i.DOWN):
+			return true
+	return false
+
+
 func _process(delta: float) -> void:
 	_anim += delta
+
+	# What a falling part does to this nasty, checked before the state machine
+	# rather than after it. It used to sit at the bottom, past the early returns, so a
+	# stunned or squashed nasty never reached it and a part landing on a stunned one
+	# went straight through. It also used to ask `ingredient_at()` about this cell and
+	# the one below, which cannot work: a part claims the row it is landing in the
+	# instant it is knocked and the fall after that is a tween, so every row it passes
+	# on the way down is in no cell at all. A nasty on a ladder two rows into a four
+	# row drop was therefore in nothing the check could see, and lived.
+	#
+	# The part is asked for the band it is sweeping instead, and this nasty for
+	# whether it is in it. That is the whole rule, and it makes a ladder irrelevant:
+	# a ladder is a place to be high up, not a place to be out of the way.
+	if state != St.SQUASH and state != St.RIDE and _under_falling_food():
+		_squash()
+		return
+
 	match state:
 		St.SQUASH:
 			_tick_timer(delta)
@@ -113,23 +147,6 @@ func _process(delta: float) -> void:
 			pass
 
 	var done := tick_step(delta)
-
-	# Two different things can happen when a part and a nasty share a column, and
-	# they are told apart by which cell the part is in rather than by state:
-	#
-	#   - the part is falling past and lands on the cell this nasty occupies, so
-	#     it gets flattened. Falling food stops on whatever it lands on, and this
-	#     nasty is a thing it lands on.
-	#   - the part is resting on the cell underfoot, so this nasty is riding it
-	#     and comes along for the ride.
-	var here := board.ingredient_at(cell)
-	if here != null and here.falling and state != St.RIDE:
-		_squash()
-		return
-	var under := board.ingredient_at(cell + Vector2i.DOWN)
-	if under != null and under.falling and state != St.RIDE:
-		_squash()
-		return
 
 	if done:
 		_arrived()
@@ -231,6 +248,16 @@ func _on_ladder() -> bool:
 func _climb_toward(target_row: int) -> void:
 	var dir := Vector2i.UP if target_row < cell.y else Vector2i.DOWN
 	if not board.is_ladder(cell + dir):
+		# At the end of the ladder. Stepping off the top is the only way a nasty
+		# on a ladder ever gets anywhere: `_patrol()` would send it back to walking
+		# the row below, which on a level whose top row is a ledge either means a
+		# solid block it cannot enter (it froze there until the level ended) or a
+		# four-cell fall to the bottom. Climbing out costs nothing and reads as the
+		# nasty topping the ladder.
+		if dir == Vector2i.UP and board.is_ladder(cell) and can_enter(cell + dir):
+			state = St.CLIMB
+			begin_step(cell + dir, STEP_CLIMB)
+			return
 		_patrol()
 		return
 	state = St.CLIMB

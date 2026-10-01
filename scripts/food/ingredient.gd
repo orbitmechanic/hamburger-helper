@@ -24,6 +24,16 @@ var rest_row := 0
 ## top of a plate's burger. Falling starts below this.
 var support_row := 0
 var falling := false
+## The rows this part is falling through, from the row it left to the row it is
+## heading for, or -1 when it is not falling.
+##
+## This exists because the grid cell a part occupies jumps the whole way down in one
+## go: _relocate() claims the destination row immediately and the fall is only a
+## tween, so the rows in between are never in the grid at all. Anything that cares
+## about the part passing a cell has to ask for the band rather than look the cell
+## up, or it only ever sees the start and the end. See swept_cells().
+var fall_from_row := -1
+var fall_to_row := -1
 
 var _tween: Tween
 
@@ -114,7 +124,9 @@ func _relocate(row: int, support: int) -> Dictionary:
 		board.claim(cells, self)
 		return where
 	cells = moved
+	fall_from_row = rest_row
 	rest_row = row
+	fall_to_row = row
 	support_row = support
 	falling = true
 	dropped.emit(1, cells[0])
@@ -147,7 +159,27 @@ func _fall_to(to: Vector2) -> void:
 
 func _on_fallen() -> void:
 	falling = false
+	fall_from_row = -1
+	fall_to_row = -1
 	queue_redraw()
+
+
+## Every cell this part passes through on its way down, including the one it lands
+## in and excluding the one it left.
+##
+## Read off the columns it currently occupies, so it is correct for a part of any
+## width without needing to know how wide it is. The row it came from is excluded
+## because it was resting there a moment ago and nothing has fallen past it yet; the
+## row it lands in is included, because a part coming to rest inside a nasty flattens
+## it exactly as a part passing over one does.
+func swept_cells() -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	if fall_from_row < 0 or fall_to_row < 0:
+		return out
+	for row in range(fall_from_row + 1, fall_to_row + 1):
+		for cell in cells:
+			out.append(Vector2i(cell.x, row))
+	return out
 
 
 ## Pixel position of this run on `row`.

@@ -51,6 +51,50 @@ const DEFS := {
 	},
 }
 
+## Textures, as a mask in a second colour over a layer's own colour.
+##
+## A mask rather than an image, one character per pixel: a mark is drawn, a dot is
+## left alone. A burger layer is a few dozen pixels across and half a cell tall, so
+## the tile is as tall as a layer and a mark is a single pixel. Anything bigger
+## would be detail nobody can see at this scale, and anything stored as a texture
+## would be a file the colours in DEFS could quietly drift out of step with.
+##
+## The patty is the black one and the lettuce the white, which is the way round
+## round they read at a glance: a speckled brown patty and a ribbed green leaf. The
+## patty's black is a very dark brown rather than a true black, because a true black
+## speck is the same colour as the outline a layer is stroked in and the texture
+## disappears into the edge instead of sitting on the patty.
+const TEXTURES := {
+	Kind.PATTY: {
+		"name": "black",
+		"color": Color("1d1410"),
+		"tile": [
+			"#...",
+			"....",
+			"..#.",
+			"....",
+			"....",
+			"#...",
+			"....",
+			"..#.",
+		],
+	},
+	Kind.LETTUCE: {
+		"name": "white",
+		"color": Color("e6f4d8"),
+		"tile": [
+			"..#.",
+			".##.",
+			"..#.",
+			"....",
+			".#..",
+			"..#.",
+			".##.",
+			"....",
+		],
+	},
+}
+
 ## The minimum a burger can be: something to sit on, a patty, and a lid.
 const MIN_STACK := 3
 
@@ -110,6 +154,31 @@ static func color_of(kind: Kind) -> Color:
 
 static func accent_of(kind: Kind) -> Color:
 	return DEFS[kind]["accent"]
+
+
+## Whether a kind has a texture. A bun has none: its rounding is the detail, and a
+## speckled dome reads as dirt rather than as a bun.
+static func has_texture(kind: Kind) -> bool:
+	return TEXTURES.has(kind)
+
+
+## The colour a kind's texture is drawn in.
+static func texture_of(kind: Kind) -> Color:
+	return TEXTURES[kind]["color"]
+
+
+## Whether the pixel at a layer-local position is one of a kind's texture marks.
+##
+## The mask repeats every four columns and every `tile.size()` rows. A layer is
+## half a cell tall, so it never shows the same row of the tile twice, and the
+## offset the board applies per layer stops two stacked patties from lining their
+## specks up into stripes.
+static func texture_at(kind: Kind, x: int, y: int) -> bool:
+	if not TEXTURES.has(kind):
+		return false
+	var tile: Array = TEXTURES[kind]["tile"]
+	var row: String = tile[posmod(y, tile.size())]
+	return row.substr(posmod(x, row.length()), 1) == "#"
 
 
 ## Whether a burger stacked bottom-to-top reads as finished.
