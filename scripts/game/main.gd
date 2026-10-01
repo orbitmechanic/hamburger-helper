@@ -13,6 +13,9 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	_t += delta
 	if Input.is_action_just_pressed(&"confirm") or Input.is_action_just_pressed(&"jump"):
+		# The jump rather than the burger: the burger belongs to finishing a level,
+		# and this is not finishing anything.
+		Sfx.play("jump")
 		get_tree().change_scene_to_file("res://scenes/game.tscn")
 	queue_redraw()
 
