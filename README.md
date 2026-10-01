@@ -46,13 +46,26 @@ doing nothing quietly. A flattened nasty likewise lies flashing for five seconds
 before returning to the ledge it started on, and cannot catch the chef while it is
 down.
 
-The chef animates off the art, not off a state machine drawn to match it. He comes
-in under a parachute for the level card, throws a punch for exactly as long as the
-spray is in the air, plays a flourish and holds the pose when a level is cleared, and
-goes down surprised for a beat when he is caught before being put back on his spawn.
-The moments the level is in charge of his animation are the ones where he is not
-doing anything himself, so the level sets the pose and takes it back; see
-`Player.set_pose`.
+The chef animates off the art, not off a state machine drawn to match it. A level
+opens with him falling in under a canopy for three seconds, drawn a cell above his
+own, and the canopy is gone by the time his feet are on the plate; he throws a punch
+for exactly as long as the spray is in the air; plays a flourish and holds the pose
+when a level is cleared; and goes down surprised for a beat when he is caught before
+being put back in the middle of the bottom floor, which is also a three second
+descent under the same canopy. He comes down rather than appearing, because
+appearing on a board he was just caught on reads as a glitch rather than as a
+respawn. The moments the level is in charge of his animation are the ones where he
+is not doing anything himself, so the level sets the pose and takes it back; see
+`Player.set_pose` and `Game._revive`.
+
+The chef and every other actor are redrawn from their own `_process`, not from
+inside their own `_draw`. Asking for a redraw from inside a draw is a no-op in Godot
+rather than a way of animating, and when that was how the project did it every
+character froze on the first frame it was ever drawn: the punch played its
+animation state but never changed a pixel, and the spray was drawn a whole
+`position` below the screen because its box is in world pixels and its drawing is
+in local ones.
+
 
 The jump is a dodge, not a way to climb. The chef can only push off a platform,
 never sideways off a ladder, and a sideways hop carries him clean over the cell in
@@ -138,9 +151,53 @@ scripts/enemies/  roaming hazards
 scripts/items/    bonus pickups
 assets/sheets/    one animation sheet per character, generated
 assets/source/    original source art the chef's sheet is generated from
-tools/            level and sheet generators, level checker, screenshots, visual checks
+assets/sfx/       one 16 bit mono WAV per effect, generated
+tools/            level, sheet and sound generators, level checker, screenshots, visual checks
 tests/            headless test runner
 ```
+
+## Sound
+
+There are eighteen effects in `assets/sfx/`, and the game asks for them by name
+through one autoload:
+
+| effect | when |
+| --- | --- |
+| `jump`, `land` | the chef pushing off, and touching down after a hop |
+| `step`, `step_soft` | his footfalls, alternating and every other cell, so a walk is not a buzz |
+| `spray`, `zap`, `deny` | a pepper dose thrown, landing on something, and refused because the jar is empty |
+| `drop`, `stack` | a part falling, and a part arriving on a plate |
+| `burger` | a plate finished - the one that gets a jingle rather than a thud |
+| `squash`, `ride` | a nasty flattened, and one picked up |
+| `bonus`, `death`, `respawn` | a bonus collected, being caught, and the parachute descent |
+| `level_clear`, `game_over`, `win` | the three ways a run ends |
+
+They are generated, not recorded, by `tools/make_sfx.gd` from the recipes in
+`tools/sfx_art.gd`, and the WAVs are committed. That is the same arrangement the
+character sheets use, and for the same reason: **the game holds no synthesis code,
+so replacing an effect is dropping in a WAV with the same name.** The recipes are
+short - a square wave and an envelope, a lowpassed noise burst, or a list of
+pitches for the jingles - and everything is 16 bit mono at 22.05 kHz so the lot
+sounds like one thing and stays small in the repo.
+
+Regenerating them is:
+
+```sh
+godot --headless --script res://tools/make_sfx.gd
+godot --headless --import
+```
+
+The import step matters more than it looks. Godot's WAV importer defaults to QOA,
+which is lossy *and* resamples out of 16 bit, so an imported effect stops matching
+the file it came from; the committed `.import` files pin `compress/mode=0` to
+lossless PCM, and the suite fails if that is ever lost. The suite also checks
+that every name the game asks for exists, that the committed WAVs still match
+their recipes byte for byte, and that no two effects are the same sound.
+
+Effects play on a pool of six players, so a chef dropping three parts in one frame
+gets three noises. A free player is preferred; only when all six are busy is one
+taken, and then the one nearest its end. Nothing waits for a player - a dropped
+effect beats a stutter.
 
 ## Characters
 

@@ -49,6 +49,19 @@ var pose_anim := -1
 ## for the poses it sets, because the chef is not processing while they play.
 var pose_progress := 1.0
 
+## Which foot the chef is on, counted in walk steps. Only used to decide whether a
+## step makes a noise, and reset by anything that is not walking - so a run starts on
+## the same foot whatever he was doing before it.
+var _step_foot := 0
+
+## Whether the chef is coming down under his parachute, and the two things the
+## descent needs to know: where he started and where he lands.
+var dropping := false
+var _drop_from := Vector2.ZERO
+var _drop_at := Vector2i.ZERO
+var _drop_t := 0.0
+var _drop_dur := 1.0
+
 
 func setup(p_board: Board, start: Vector2i) -> void:
 	board = p_board
@@ -72,12 +85,70 @@ func place(at: Vector2i) -> void:
 	# doing on the way to that spot is over. Without this a respawn would put him
 	# back on the board still wearing the pose he went down in.
 	clear_pose()
+	# Landing is a normal arrival, so a chef who was coming down under a parachute
+	# is not left holding the canopy over a board he is already standing on.
+	dropping = false
+
+
+## Sends the chef in over the top of the screen under his parachute, to land on
+## `at` after `dur` seconds.
+##
+## He starts at the top of the screen rather than at the top of the board: the
+## canopy is drawn in the cell above his, so putting the canopy flush with the top
+## edge is what puts the whole rig - canopy above, chef hanging below it - on screen
+## at the moment the level card comes up. The cell he is logically in stays the
+## landing cell the whole way down, so a chef drifting across the board is not
+## caught by a nasty he is nowhere near, and the card is over the board he is
+## passing anyway.
+func begin_drop(at: Vector2i, dur: float) -> void:
+	_drop_at = at
+	_drop_dur = maxf(dur, 0.001)
+	_drop_t = 0.0
+	dropping = true
+	_drop_from = Vector2(Cfg.cell_to_pixel(at).x, Cfg.TILE * 2.0)
+	cell = at
+	position = _drop_from
+	queue_redraw()
+
+
+## Where a descending chef is, 0 to 1 through the drop.
+func drop_progress() -> float:
+	return clampf(_drop_t / _drop_dur, 0.0, 1.0)
+
+
+## Land a descending chef now, wherever he has got to.
+##
+## The level calls this when the phase moves on. The drop and the level card run
+## off the same duration, so in practice they finish together, but two clocks that
+## agree only to within a frame are two clocks, and a frame where they do not is a
+## chef playing under a parachute.
+func finish_drop() -> void:
+	if dropping:
+		place(_drop_at)
+
+
+## Advances the descent and moves the chef along it, landing him on the spawn when
+## the drop runs out. Driven by the level rather than the chef's own clock, because
+## the chef is not processing while he is coming in - a falling chef answering the
+## keyboard is a falling chef who walks off the parachute.
+func drop_step(delta: float) -> void:
+	if not dropping:
+		return
+	_drop_t = minf(_drop_t + delta, _drop_dur)
+	var to := Cfg.cell_to_pixel(_drop_at)
+	# A gentle ease-out, so he arrives rather than stops. A straight line is fine
+	# too, but the landing is the one moment the player is watching.
+	var t := drop_progress()
+	position = _drop_from.lerp(to, 1.0 - pow(1.0 - t, 2.0))
+	if _drop_t >= _drop_dur:
+		place(_drop_at)
 
 
 func _process(delta: float) -> void:
 	_anim += delta
 	if spray_time > 0.0:
 		spray_time = maxf(spray_time - delta, 0.0)
+	queue_redraw()
 	_drive()
 	var done := tick_step(delta)
 	# The hop arc is applied on top of the linear cell-to-cell interpolation, so
@@ -225,6 +296,7 @@ func _begin_jump(want: Vector2i, running: bool) -> void:
 	# air, so the height is free to read as effort.
 	_jump_lift = JUMP_LIFT if running else JUMP_LIFT_STAND
 	state = St.JUMP
+	Sfx.play("jump")
 	# The longer hop is given more time, but not twice as much, so clearing a
 	# nasty reads as one quick push-off rather than a slow drift across the floor.
 	# A reach straight up is one cell, so it is the quickest hop of the three.
@@ -251,13 +323,29 @@ func _supported() -> bool:
 
 
 func _arrived() -> void:
+	# A hop answers itself with a landing, but arriving in a cell by any other means
+	# - finishing a fall or a climb - is silent, because the drop and the climb
+	# already made their own noise. Keyed off the state on arrival rather than off
+	# every arrival so a step onto the same cell twice cannot double it.
 	if state == St.JUMP:
+		Sfx.play("land")
+		_step_foot = 0
 		state = St.WALK
+	elif state == St.WALK:
+		# Every *other* step, alternating between the two effects. One sound per step
+		# would be eight a second at STEP_WALK, which is a buzz; every other one is
+		# four, which is a footfall - each foot touching down once per two cells. The
+		# pair is alternated as well as halved so a run does not sound like it is
+		# keeping time with something.
+		_step_foot += 1
+		if _step_foot % 2 == 0:
+			Sfx.play("step" if _step_foot % 4 == 0 else "step_soft")
 	_track_crossing()
 	if not _supported():
 		state = St.FALL
 		return
 	if state == St.FALL or state == St.CLIMB:
+		_step_foot = 0
 		state = St.WALK
 	queue_redraw()
 
@@ -289,25 +377,36 @@ func _close_crossing() -> void:
 # --- Drawing ---------------------------------------------------------------
 
 
+## One redraw a frame is asked for from _process rather than from here. Asking for
+## a redraw from inside _draw does not schedule another one, so the chef - and
+## every other actor that used the same pattern - froze on the first frame it was
+## ever drawn and never animated again.
 func _draw() -> void:
 	draw_chef()
 	if spray_time > 0.0:
 		_draw_spray()
-	queue_redraw()
 
 
 ## The thrown dose, drawn as a puff of specks thrown out in front of the chef and
 ## thinning as it fades, so the player can see how far a shot reached.
+##
+## spray_rect() is in world pixels, because it doubles as the box the nasties are
+## tested against. Drawing happens in the chef's own space, so the rect is shifted
+## back by the chef's position. Drawn straight it put the whole puff a position
+## lower again and off the bottom of the screen, which is why the punch played but
+## no dose was ever visible.
 func _draw_spray() -> void:
 	var rect := spray_rect()
-	var left := rect.position.x
+	var left := rect.position.x - position.x
+	var mid := rect.position.y - position.y
 	var f := spray_time / SPRAY_TIME
 	for i in 7:
 		var t := (float(i) + 0.5) / 7.0
 		var x := left + rect.size.x * t
 		var spread := sin(t * PI) * 4.0
-		var y := position.y + sin(float(i) * 2.1) * spread
-		draw_circle(Vector2(x, y), 1.5 + t, Color(Cfg.COL_PEPPER, f * (1.0 - t * 0.5)))
+		var y := mid + sin(float(i) * 2.1) * spread
+		var c := Color(Cfg.COL_PEPPER.r, Cfg.COL_PEPPER.g, Cfg.COL_PEPPER.b, f * (1.0 - t * 0.5))
+		draw_circle(Vector2(x, y), 1.5 + t, c)
 
 
 ## Blits the current frame of the chef's sheet, mirrored to face the way he is
@@ -322,6 +421,19 @@ func draw_chef() -> void:
 	draw_texture_rect_region(sheet, Rect2(Sheet.offset(), Vector2(Sheet.CELL)),
 			Sheet.region(anim, anim_frame(anim)))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if dropping:
+		_draw_parachute(sheet)
+
+
+## The canopy, on the cell above the chef's while he is coming in.
+##
+## Drawn straight rather than mirrored: a canopy is symmetric, so flipping it would
+## be inventing a difference. Its strings run to the bottom of its own cell, which
+## is the top of the chef's, so they read as hanging from it.
+func _draw_parachute(sheet: Texture2D) -> void:
+	draw_texture_rect_region(sheet,
+			Rect2(Sheet.offset() - Vector2(0.0, Cfg.TILE), Vector2(Sheet.CELL)),
+			Sheet.region(Sheet.Anim.PARACHUTE, 0))
 
 
 ## Which animation the chef is in.
@@ -331,6 +443,12 @@ func draw_chef() -> void:
 ## seasoning on the way in through a parachute or celebrating a cleared level. The
 ## spray is second, and reads as a punch for as long as the puff is in the air.
 func anim_state() -> int:
+	if dropping:
+		# Hanging. The parachute is its own drawing a cell above him rather than a
+		# pose he is in, so what he is showing here is a chef doing nothing, which
+		# is IDLE: the idle breathing is the only thing that reads as a person
+		# waiting rather than a person switched off.
+		return Sheet.Anim.IDLE
 	if pose_anim >= 0:
 		return pose_anim
 	if spray_time > 0.0:
