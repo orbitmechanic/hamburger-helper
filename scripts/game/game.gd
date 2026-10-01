@@ -13,9 +13,19 @@ const PHASE_TIME := 2.6
 ## How long the chef's victory runs before he settles on the last frame. Shorter
 ## than the banner on purpose, so he holds the pose rather than restarting it.
 const VICTORY_TIME := 1.2
+## How long the chef spends coming down under his parachute at the start of a
+## level. The level card holds for exactly this long, so the card and the descent
+## are one beat: the card is up while he is in the air and comes down when he lands,
+## rather than the two finishing at different times and leaving a banner over a
+## board the chef is already playing on.
+const DROP_TIME := 3.0
 ## How long the chef stays down after being caught, before he is put back. Long
 ## enough to read the surprised pose, short enough not to feel like a stall.
 const DEATH_TIME := 0.7
+## How long a popup stays on the board. Long enough to read and to find, short
+## enough that the next one is not drawn on top of it and the board does not
+## accumulate a wall of old scores.
+const POPUP_TIME := 2.0
 ## A pepper dose the level starts with, as in the original.
 const STARTING_PEPPER := 1
 ## Seconds between random bonuses appearing, and how many can be out at once.
@@ -39,6 +49,13 @@ var _bonus_t := 0.0
 ## phase timer rather than becoming a phase of its own: the board is still in play
 ## behind him, it is only waiting for the chef.
 var _dying := 0.0
+## Set while the chef is coming back down under his parachute after a death. He is
+## out of play for it, and the level is still PLAYING, so this is a flag on the
+## game rather than a phase of its own.
+var _respawning := false
+## How far through the respawn drop the chef is. Separate from DROP_TIME so a
+## slow frame cannot land him early.
+var _respawn_t := 0.0
 
 
 func _ready() -> void:
@@ -97,14 +114,21 @@ func start_level(index: int) -> void:
 	_bonus_t = BONUS_EVERY
 	paused = false
 	_dying = 0.0
+	_respawning = false
+	_respawn_t = 0.0
 	_set_player_active(false)
 	phase = Phase.INTRO
-	_phase_t = Cfg.INTRO_TIME
-	# He comes in under the parachute for the level card. There is no drop and no
-	# descent: the level card is a static overlay, so a chef who fell into it would
-	# land on a ledge the player has not been shown yet, and the card would be
-	# covering the fall. The pose says "arriving" and the card does the timing.
-	player.set_pose(Sheet.Anim.PARACHUTE)
+	# He comes in over the top of the screen under his parachute and lands on the
+	# spawn as the card comes down, and the card is held for exactly as long as the
+	# descent: see DROP_TIME.
+	_phase_t = DROP_TIME
+	# The centre of the bottom floor, which is where a respawn comes in - not the
+	# level's authored start. Those are different cells, and the authored one is
+	# wherever the map could spare a `@`, so the run used to open with the chef
+	# parachuting into a corner and having to walk back out of it. He now lands where
+	# he would land after being caught, which is the one cell in the level chosen for
+	# being somewhere to stand rather than for being out of the way.
+	player.begin_drop(board.respawn_spawn, DROP_TIME)
 	if hud != null:
 		hud.queue_redraw()
 
@@ -155,6 +179,8 @@ func _on_crossed(ing: Ingredient) -> void:
 		if enemy != null and is_instance_valid(enemy) and enemy.riding(ing):
 			riders += 1
 			enemy.attach(ing)
+	if riders > 0:
+		Sfx.play("ride")
 	ing.knock(1 if riders > 0 else 0)
 
 
@@ -165,6 +191,7 @@ func _on_rider() -> void:
 
 func _on_ingredient_dropped(floors: int, at: Vector2i) -> void:
 	GameState.add_score(floors * Food.POINTS_PER_FLOOR)
+	Sfx.play("drop")
 
 
 ## A part has reached a plate. If that finishes the burger it is worth scoring
@@ -172,7 +199,11 @@ func _on_ingredient_dropped(floors: int, at: Vector2i) -> void:
 func _on_ingredient_boarded(plate: LevelData.Span) -> void:
 	GameState.add_score(Food.POINTS_PER_FLOOR)
 	if not Food.stack_is_burger(board.stack(plate.x)):
+		Sfx.play("stack")
 		return
+	# A finished burger is the moment worth hearing, so the part landing on the
+	# plate answers itself rather than piling a second sound on top of the jingle.
+	Sfx.play("burger")
 	GameState.count_burger(Food.burger_points(board.stack(plate.x).size()))
 	_popup("+%d" % Food.burger_points(board.stack(plate.x).size()), Cfg.COL_BONUS)
 	_popup_tween(Cfg.cell_to_pixel(Vector2i(plate.x, plate.y)))
@@ -182,6 +213,7 @@ func _on_ingredient_boarded(plate: LevelData.Span) -> void:
 
 func _on_enemy_squashed(points: int) -> void:
 	GameState.add_score(points)
+	Sfx.play("squash")
 
 
 # --- Bonuses ---------------------------------------------------------------
@@ -210,6 +242,7 @@ func _process_bonuses(delta: float) -> void:
 
 
 func _collect(bonus: Bonus) -> void:
+	Sfx.play("bonus")
 	match bonus.kind:
 		Bonus.Kind.PEPPER, Bonus.Kind.SALT:
 			player.add_pepper(bonus.charges())
@@ -274,6 +307,7 @@ func _fire_pepper() -> void:
 		return
 	if not player.spend_pepper():
 		_popup("NO PEPPER", Cfg.COL_PLATE)
+		Sfx.play("deny")
 		return
 	var spray := player.spray_rect()
 	var hit := 0
@@ -282,6 +316,12 @@ func _fire_pepper() -> void:
 		if enemy != null and is_instance_valid(enemy) and spray.intersects(enemy.hit_rect()):
 			enemy.stun(SPRAY_STUN_TIME)
 			hit += 1
+	# The hiss is the throw and the zap is what it bought, so a dose that connects
+	# makes both - and a dose that does not is quiet apart from the spray, which is
+	# the sound of having missed.
+	Sfx.play("spray")
+	if hit > 0:
+		Sfx.play("zap")
 	_popup("SPRAY!" if hit == 0 else "ZAP x%d" % hit, Cfg.COL_PEPPER)
 
 
@@ -321,6 +361,7 @@ func _touching(enemy: Enemy) -> bool:
 
 func _on_player_died() -> void:
 	GameState.lose_chef()
+	Sfx.play("death")
 	# Every nasty goes back to its own ledge, as in the original. Without this a
 	# nasty sitting next to the chef's spawn eats the run chef after chef, because
 	# each respawn puts the chef straight back into its arms.
@@ -337,25 +378,42 @@ func _on_player_died() -> void:
 		_enter(Phase.GAME_OVER)
 		return
 	_popup("OUCH!", Cfg.COL_PLATE)
-	_popup_tween(Cfg.cell_to_pixel(board.chef_spawn))
+	# Where he was caught, not where he is about to be put back. The two are the
+	# same cell on the first death and a long way apart on every one after it, so
+	# reading the spawn here pins the complaint to the respawn and tells the player
+	# nothing about what actually got him.
+	_popup_tween(Cfg.cell_to_pixel(player.cell))
 	_dying = DEATH_TIME
 	_set_player_active(false)
 
 
-## Put the chef back where he started. The plate work already done stays done.
+## Put the chef back in the middle of the bottom floor, under his parachute.
+##
+## He comes down rather than appearing, because appearing on a board he was just
+## caught on is what made a death feel like a glitch: the same chef was in two
+## places in the space of a frame. The drop is the one the level opens with, so a
+## respawn reads as the level putting him back rather than as a new thing, and the
+## canopy comes off on the landing the same way it does at the start.
 func _revive() -> void:
 	_dying = 0.0
 	if player == null or not is_instance_valid(player):
 		return
-	# `place` hands the chef back to himself, so the surprised pose goes with it.
-	player.place(board.chef_spawn)
-	_set_player_active(true)
+	# `begin_drop` hands the chef back to himself, so the surprised pose goes with
+	# it, and it leaves him not processing until the drop finishes.
+	player.begin_drop(board.respawn_spawn, DROP_TIME)
+	Sfx.play("respawn")
+	_respawn_t = 0.0
+	_respawning = true
 
 
 # --- Flow -------------------------------------------------------------------
 
 
 func _process(delta: float) -> void:
+	# Before the early returns below, so a popup still ages out while the chef is
+	# down, paused off, or the level is clearing. A popup that froze during the
+	# death beat would sit on the board for the rest of the level.
+	_age_popups(delta)
 	if Input.is_action_just_pressed(&"pause") and phase == Phase.PLAYING:
 		paused = not paused
 		if hud != null:
@@ -373,6 +431,24 @@ func _process(delta: float) -> void:
 			hud.queue_redraw()
 		return
 
+	# And coming back down. Like INTRO, the drop runs off the level's clock rather
+	# than the chef's, because he is not processing, and like INTRO the board is
+	# simply not in play until he lands.
+	if _respawning:
+		_respawn_t += delta
+		player.drop_step(delta)
+		if _respawn_t >= DROP_TIME:
+			_respawning = false
+			_respawn_t = 0.0
+			# finish_drop is what hands him back to himself and takes the canopy off;
+			# doing it here rather than in _revive is what makes the landing and the
+			# chef becoming playable the same frame.
+			player.finish_drop()
+			_set_player_active(true)
+		if hud != null:
+			hud.queue_redraw()
+		return
+
 	match phase:
 		Phase.PLAYING:
 			_process_bonuses(delta)
@@ -382,7 +458,7 @@ func _process(delta: float) -> void:
 			# Everything that is not PLAYING just runs its phase timer down, which
 			# includes the level card, so INTRO deliberately falls through here.
 			_phase_t -= delta
-			_celebrate()
+			_pose_the_chef(delta)
 			if _phase_t <= 0.0:
 				_advance()
 
@@ -390,16 +466,22 @@ func _process(delta: float) -> void:
 		hud.queue_redraw()
 
 
-## Play the chef's victory off the back of the level-clear banner, which is longer
-## than the animation: he finishes the flourish and holds the pose for the rest of
-## it, then is gone when the banner is.
-func _celebrate() -> void:
-	if phase != Phase.LEVEL_CLEAR and phase != Phase.ALL_CLEAR:
-		return
+## The chef while the level is in charge of him: coming down under his parachute
+## for the card, and celebrating a cleared level.
+##
+## Both are on the phase's own clock rather than the chef's, because he is not
+## processing during either, so a clock of his own would not be running.
+func _pose_the_chef(delta: float) -> void:
 	if player == null or not is_instance_valid(player):
 		return
-	player.set_pose(Sheet.Anim.VICTORY,
-			clampf((PHASE_TIME - _phase_t) / VICTORY_TIME, 0.0, 1.0))
+	match phase:
+		Phase.INTRO:
+			player.drop_step(delta)
+		Phase.LEVEL_CLEAR, Phase.ALL_CLEAR:
+			# The banner is longer than the flourish, so he settles on the last
+			# frame and holds it for the rest rather than restarting.
+			player.set_pose(Sheet.Anim.VICTORY,
+					clampf((PHASE_TIME - _phase_t) / VICTORY_TIME, 0.0, 1.0))
 
 
 ## The chef only moves and is only hit while the level is actually running.
@@ -415,11 +497,28 @@ func _enter(next: Phase) -> void:
 	# play takes him off the floor with it, or the death beat would swallow the
 	# banner it happens during.
 	_dying = 0.0
+	# And any respawn descent in flight. A level that ends while the chef is still
+	# coming back down would otherwise leave the flag set, and the next level would
+	# open with him dropping out of the sky for no reason. Landing him here is the
+	# same contract as the PLAYING branch below: whatever the canopy was doing, it
+	# is not doing it any more.
+	_respawning = false
+	_respawn_t = 0.0
+	# Landing him here is the same contract as the PLAYING branch below: whatever
+	# the canopy was doing, it is not doing it any more. finish_drop is what takes
+	# it off, and calling it only when dropping is true is why a level that ended
+	# mid-descent would otherwise leave a canopy hanging over a board the chef has
+	# already been taken off.
+	if player != null and is_instance_valid(player):
+		player.finish_drop()
 	match next:
 		Phase.PLAYING:
-			# The parachute was only for the level card, so from here the chef is
-			# playing again and animates himself.
+			# The canopy is only for the descent, and the descent is only for the
+			# card. Landing here rather than trusting the two clocks to finish
+			# together: if they are a frame apart the chef is playing under a
+			# parachute, or a parachute is left hanging over a board he has landed on.
 			if player != null and is_instance_valid(player):
+				player.finish_drop()
 				player.clear_pose()
 			_set_player_active(true)
 		Phase.LEVEL_CLEAR:
@@ -430,14 +529,17 @@ func _enter(next: Phase) -> void:
 			if player != null and is_instance_valid(player):
 				player.set_pose(Sheet.Anim.VICTORY, 0.0)
 			_popup("LEVEL CLEAR!", Cfg.COL_BONUS)
+			Sfx.play("level_clear")
 			GameState.save_progress()
 		Phase.GAME_OVER:
 			_set_player_active(false)
 			_popup("GAME OVER", Cfg.COL_PLATE)
+			Sfx.play("game_over")
 			GameState.save_progress()
 		Phase.ALL_CLEAR:
 			_set_player_active(false)
 			_popup("YOU WIN!", Cfg.COL_PEPPER)
+			Sfx.play("win")
 			GameState.save_progress()
 
 
@@ -463,6 +565,22 @@ func _popup_tween(at: Vector2) -> void:
 	if _popups.is_empty():
 		return
 	_popups.back()["pos"] = at
+
+
+## Ages the popups and drops the ones that have been up long enough.
+##
+## Without this they never went away at all, so the `OUCH!` from the first death
+## was still on the board at the end of the level, sitting on top of whatever the
+## chef was doing. Each popup keeps its own clock rather than the whole batch
+## ageing together, so a score that comes up mid-death still gets its full two
+## seconds instead of inheriting the age of the thing that was already there.
+func _age_popups(delta: float) -> void:
+	var live: Array = []
+	for p in _popups:
+		p["t"] = float(p["t"]) + delta
+		if float(p["t"]) < POPUP_TIME:
+			live.append(p)
+	_popups = live
 
 
 ## For the Hud to draw. Popups live here because only the Game knows where things

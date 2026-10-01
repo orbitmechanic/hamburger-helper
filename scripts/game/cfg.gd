@@ -32,9 +32,6 @@ const STEP_FALL := 0.075
 ## the stack, so no collision moves.
 const BURGER_LAYER_H := TILE / 2
 
-## Seconds the level card holds before the chef takes over.
-const INTRO_TIME := 2.4
-
 # Palette - a warm diner look on a dark background.
 const COL_BG := Color("11111f")
 const COL_PLATFORM := Color("c8a06a")

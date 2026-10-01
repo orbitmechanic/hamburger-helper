@@ -18,10 +18,8 @@ extends Node
 var _passed := 0
 var _failed := 0
 
-
 func _ready() -> void:
 	_run()
-
 
 func _run() -> void:
 	print_rich("[b]Hamburger Helper - test suite[/b]")
@@ -39,6 +37,7 @@ func _run() -> void:
 	_test_burger_order()
 	_test_burgers_are_half_height()
 	_test_sheets()
+	_test_sfx()
 	_test_burger_scoring()
 	await _test_board_tiles()
 	await _test_landing_spot()
@@ -55,12 +54,23 @@ func _run() -> void:
 	await _test_pepper_is_fired_by_a_key()
 	await _test_contact_is_drawn_contact()
 	await _test_falling_food_squashes()
+	await _test_falling_food_crushes_what_it_passes()
+	await _test_food_crushes_a_nasty_on_a_ladder()
+	await _test_intro_lands_in_the_centre()
+	await _test_a_nasty_steps_off_the_top_of_a_ladder()
+	await _test_a_nasty_steps_off_the_bottom_of_a_ladder()
 	await _test_riding_a_part()
 	await _test_crossing_a_part_carries_the_nasty()
 	await _test_game_starts_every_level()
 	await _test_burger_completes_the_level()
 	await _test_running_out_of_chefs()
 	await _test_a_death_resets_the_nasties()
+	await _test_a_popup_times_out()
+	await _test_each_popup_ages_on_its_own_clock()
+	await _test_a_popup_ages_out_while_the_chef_is_down()
+	await _test_a_respawn_is_the_middle_of_the_floor_and_a_descent()
+	await _test_a_respawn_drop_is_on_the_level_clock()
+	await _test_a_level_ending_mid_descent_clears_the_respawn()
 	await _test_the_level_directs_the_chef()
 
 	print("")
@@ -71,9 +81,7 @@ func _run() -> void:
 		print_rich("[color=red]FAIL[/color]  %d passed, %d failed" % [_passed, _failed])
 		get_tree().quit(1)
 
-
 # --- Configuration ---------------------------------------------------------
-
 
 ## The input map lives in project.godot rather than being registered in code at
 ## startup, which is where the editor expects it. Nothing else notices when that
@@ -108,9 +116,7 @@ func _test_input_map() -> void:
 		check(missing.is_empty(), "%s responds to its documented keys" % action,
 			"missing %s" % str(missing))
 
-
 # --- Levels ----------------------------------------------------------------
-
 
 ## Every shipped level has to pass its own validator. This is the check that stops
 ## a hand-edited map from shipping unplayable, since validate() is what proves the
@@ -123,7 +129,6 @@ func _test_levels_validate() -> void:
 		var problems := LevelData.validate(lv)
 		check(problems.is_empty(), "level %d (%s) is valid" % [i + 1, lv.name],
 			"; ".join(problems))
-
 
 ## A validator that never fails is worse than none, because it is believed. This
 ## feeds it maps that are wrong in each of the ways a hand edit gets them wrong.
@@ -219,13 +224,11 @@ func _test_validator_has_teeth() -> void:
 	check(_mentions(problems, "wide"), "the width failure names the width",
 		"got %s" % "; ".join(problems))
 
-
 func _mentions(problems: PackedStringArray, needle: String) -> bool:
 	for p in problems:
 		if p.findn(needle) != -1:
 			return true
 	return false
-
 
 ## The shape every level shares. These are the invariants a generated map has to
 ## keep, checked against the source rather than the generator so that a bad paste
@@ -278,7 +281,6 @@ func _test_level_geometry() -> void:
 		check(kinds.size() == 3, "%s uses hot dog, egg and pickle" % tag,
 			"found %d kinds" % kinds.size())
 
-
 ## The chef must never begin a level somewhere he cannot get out of.
 ##
 ## This is not a style rule, it is a fairness one, and it caught a real trap: DINNER
@@ -305,7 +307,6 @@ func _test_chef_never_starts_trapped() -> void:
 			"a chef with one way out is a chef in a corner")
 		h.teardown()
 
-
 ## Ways out of a cell: the steps the chef could actually take from there.
 func _walk_exits(board: Board, from: Vector2i) -> int:
 	var out := 0
@@ -327,8 +328,6 @@ func _walk_exits(board: Board, from: Vector2i) -> int:
 				continue
 		out += 1
 	return out
-
-
 
 ## A part is drawn over the middle of the cells it occupies, and the burger it
 ## joins is drawn over the middle of the plate. If those two centres disagree,
@@ -363,7 +362,6 @@ func _test_parts_are_centred() -> void:
 			"at %s, wanted %s" % [str(ing.position), str(landed)])
 	h.teardown()
 
-
 ## An ingredient and the plate it lands on have to occupy the same cells.
 ##
 ## A part keeps its own column all the way down, and the finished burger is drawn
@@ -387,7 +385,6 @@ func _test_ingredient_columns_line_up() -> void:
 						ing.ch, ing.x, ing.right(), plate.x, plate.right()])
 		check(mismatched.is_empty(), "%s lines every ingredient up with its plate" % tag,
 			"; ".join(mismatched))
-
 
 ## A burger grows upward from its plate, one row per layer, and a part cannot fall
 ## through a platform. So the rows above a plate have to stay clear for the whole
@@ -448,7 +445,6 @@ func _test_burgers_have_room() -> void:
 	check(not reported.is_empty(), "a burger with nowhere to grow is reported",
 		"got %d problems" % reported.size())
 
-
 ## Nasties are spread over the storeys and start well clear of the chef.
 ##
 ## With all of them on the ground floor, the start of a level is a walk along one
@@ -470,9 +466,7 @@ func _test_enemies_are_spread_out() -> void:
 			"%s starts every nasty at least %d cells from the chef" % [tag, LevelData.ENEMY_MIN_DISTANCE],
 			"closest is %d" % closest)
 
-
 # --- Food ------------------------------------------------------------------
-
 
 ## A burger is a base bun, a patty, optional toppings, and a lid, in that order.
 ## Every position is checked, so a burger assembled inside out is not scored.
@@ -504,7 +498,6 @@ func _test_burger_order() -> void:
 	check(not Food.stack_is_burger([b, p, -1, t]), "a nonsense part is rejected safely")
 	check(not Food.stack_is_burger([b, 99, t]), "a nonsense part is rejected safely")
 
-
 func _test_burger_scoring() -> void:
 	_begin("burger scoring")
 	check(Food.burger_points(0) == 0, "an empty plate is worth nothing")
@@ -519,9 +512,7 @@ func _test_burger_scoring() -> void:
 	check(Food.squash_points(Enemy.Kind.EGG) > Food.squash_points(Enemy.Kind.HOTDOG),
 		"an egg is worth more to squash than a hot dog")
 
-
 # --- Board -----------------------------------------------------------------
-
 
 func _test_board_tiles() -> void:
 	_begin("board tiles")
@@ -559,7 +550,6 @@ func _test_board_tiles() -> void:
 	overlap.setup(board, _span("m", 1, 2, 9))
 	check(board.ingredient_at(Vector2i(1, 9)) == first, "a second claim on taken cells is refused")
 	h.teardown()
-
 
 ## landing_spot is the whole "push it and it drops a floor" rule, so it is worth
 ## checking against each kind of thing that can be below.
@@ -605,7 +595,6 @@ func _test_landing_spot() -> void:
 	check(spot["row"] == 8, "and the falling part rests just above it", "row is %s" % str(spot["row"]))
 	h.teardown()
 
-
 ## One push moves a part one storey: it lands on the ledge below rather than
 ## dropping the whole height of the level. A part is already sitting on the front
 ## of a ledge, so the scan starts below that ledge and it falls to the next one.
@@ -640,7 +629,6 @@ func _test_single_knock_falls_one_storey() -> void:
 		"row is %d" % ing.rest_row)
 	h.teardown()
 
-
 ## Ledges catch falling food as well as the chef. A part knocked off the top
 ## storey lands on the next ledge down rather than dropping to the floor, which
 ## is what turns a column of parts into a burger one push at a time.
@@ -661,7 +649,6 @@ func _test_food_lands_on_a_ledge() -> void:
 	check(board.tile_at(Vector2i(5, 4)) == Board.Tile.PLATFORM,
 		"which is the ledge it was dropped onto")
 	h.teardown()
-
 
 ## The chain: knocking the top of a column walks it down one storey, and doing
 ## that repeatedly walks it onto the plate.
@@ -707,7 +694,6 @@ func _test_chain_reaction() -> void:
 	check(order[0] == Food.Kind.BUN_BOTTOM, "on top of the base bun the plate provides")
 	h.teardown()
 
-
 ## The highest part left standing in a plate's column, the thing the chef would
 ## cross next. Scans the board rather than the "ingredients" group, which only
 ## the Game populates.
@@ -723,7 +709,6 @@ func _column_top(board: Board, plate_index: int) -> Ingredient:
 		return null
 	parts.sort_custom(func(a: Ingredient, b: Ingredient) -> bool: return a.rest_row < b.rest_row)
 	return parts[0]
-
 
 ## The same thing driven by the chef rather than by a direct knock, which is the
 ## path a player actually takes: one crossing is one storey, so the chef walks
@@ -757,7 +742,6 @@ func _test_column_builds_a_burger() -> void:
 		"stack is %s" % str(board.stack(0)))
 	h.teardown()
 
-
 ## A part is only pushed by a full crossing. Brushing its edge does nothing, which
 ## is what makes the width of a part part of the puzzle.
 func _test_crossing_needs_the_full_width() -> void:
@@ -789,9 +773,7 @@ func _test_crossing_needs_the_full_width() -> void:
 		"row went %d -> %d" % [before, ing.rest_row])
 	h.teardown()
 
-
 # --- Player ----------------------------------------------------------------
-
 
 ## The jump is a dodge, not a way to climb: it clears the cell in front so a nasty
 ## standing in it is gone over rather than landed on, and it only works as a push
@@ -886,7 +868,6 @@ func _test_player_jump() -> void:
 		"ended at %s" % str(h.player.cell))
 	h.teardown()
 
-
 ## Runs one hop and reports how far the chef's sprite rose above the row he took
 ## off from, in pixels. Both hops stay on the same row, so the whole difference is
 ## the arc.
@@ -906,7 +887,6 @@ func _hop_peak(h: _Harness, from: Vector2i, running: bool) -> float:
 	if running:
 		h.release(&"move_right")
 	return base - peak
-
 
 ## The stopped jump exists so the chef can reach a jar sitting on a plate above the
 ## track he normally walks, so the pickup is the behaviour worth pinning down: the
@@ -961,7 +941,6 @@ func _test_reach_grabs_a_jar_above() -> void:
 		"%d left" % player.pepper_left)
 	h.teardown()
 
-
 func _test_ladder_climb() -> void:
 	_begin("ladder climb")
 	var h := _Harness.new(self)
@@ -981,7 +960,6 @@ func _test_ladder_climb() -> void:
 		"y went %d -> %d" % [base.y, h.player.cell.y])
 	check(board.is_ladder(h.player.cell) or h.player.cell.y == 6, "and ends on or above it")
 	h.teardown()
-
 
 ## Walking off the end of a ledge drops him, because there is nothing there.
 func _test_player_falls_off_a_ledge() -> void:
@@ -1014,7 +992,6 @@ func _test_player_falls_off_a_ledge() -> void:
 		"held on the reach rather than played through")
 	h.teardown()
 
-
 func _test_pepper_stuns_a_nasty() -> void:
 	_begin("pepper")
 	var h := _Harness.new(self)
@@ -1039,7 +1016,6 @@ func _test_pepper_stuns_a_nasty() -> void:
 	check(enemy.state == Enemy.St.STUN, "a stung nasty stops")
 	h.teardown()
 
-
 func _test_nasties_are_slow() -> void:
 	_begin("a nasty is half the pace it was")
 	# Measured rather than asserted against the constant, so this is what a player
@@ -1054,6 +1030,16 @@ func _test_nasties_are_slow() -> void:
 		"and at least twice as long climbing",
 		"nasty %ss vs chef %ss" % [Enemy.STEP_CLIMB, Cfg.STEP_CLIMB])
 
+## A nasty that has climbed to the top of a ladder has to step off it onto the
+## walk row above.
+##
+## The top rung is not the top of the climb. The cell above it is, and on every
+## shipped level it is open floor with the platform of the storey below it. So a
+## nasty standing on the top rung is on a ladder with no rung above it and solid
+## platform either side - and _patrol(), which is what it fell through to, turns
+## it round into that platform and leaves it standing there for the rest of the
+## level. It cannot climb and it cannot walk. The nasty stops a row short of the
+## floor the ladder was built to reach, and the player watches it do nothing.
 	# Now time a real one moving down a corridor.
 	var h := _Harness.new(self)
 	await h.setup(_synthetic_map())
@@ -1080,7 +1066,6 @@ func _test_nasties_are_slow() -> void:
 		"%.3fs per cell" % per_cell)
 	h.teardown()
 
-
 ## A finished burger is drawn at half height, and only the drawing.
 ##
 ## At a cell per layer a four-layer burger stood four rows up in the floor the
@@ -1088,6 +1073,68 @@ func _test_nasties_are_slow() -> void:
 ## same burger in two rows. The risk in that change is the stack and the drawing
 ## drifting apart, so this checks the drawn rectangles against the shipped levels
 ## and then checks the logical stack is still one layer per cell.
+
+func _test_a_nasty_steps_off_the_top_of_a_ladder() -> void:
+	_begin("a nasty steps off the top of a ladder")
+	var h := _Harness.new(self)
+	await h.setup(_full_height_ladder_map())
+	if h.board == null:
+		return
+
+	# The top rung: a ladder at the top of the solid row, with the walk row above it
+	# open and the platform row solid either side of the ladder.
+	var top_rung := Vector2i(14, 1)
+	check(h.board.is_ladder(top_rung), "the test starts on a ladder")
+	check(not h.board.is_ladder(top_rung + Vector2i.UP),
+		"with no rung above it")
+	check(not h.board.blocks_player(top_rung + Vector2i.UP),
+		"and open floor above it")
+	check(h.board.blocks_player(top_rung + Vector2i.LEFT)
+			and h.board.blocks_player(top_rung + Vector2i.RIGHT),
+		"but platform either side, so it cannot simply walk off")
+
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(h.board, top_rung, Enemy.Kind.EGG, h.player)
+	# On the walk row above, so the nasty is chasing upward.
+	h.player.place(top_rung + Vector2i.UP)
+
+	# Give it long enough to have walked a good few cells if it were going to.
+	await h.seconds(3.0)
+	check(enemy.cell.y < top_rung.y, "it gets above the top of the ladder",
+		"stuck on row %d" % enemy.cell.y)
+	# Not "it is on the cell above the rung" - by now it may well have carried on up
+	# and along the top walk row, which is the point. What must not be true is that
+	# it is standing still on the ladder, so this asks whether it is still going.
+	check(not (enemy.cell == top_rung and not enemy.moving),
+		"and is not left standing on the ladder")
+	h.teardown()
+
+## The bottom of a ladder is the same hazard in reverse, so it is checked too: a
+## nasty that cannot get off the bottom is a nasty that cannot get on to the floor
+## below it at all.
+func _test_a_nasty_steps_off_the_bottom_of_a_ladder() -> void:
+	_begin("a nasty steps off the bottom of a ladder")
+	var h := _Harness.new(self)
+	await h.setup(_full_height_ladder_map())
+	if h.board == null:
+		return
+
+	var bottom_rung := Vector2i(14, 4)
+	check(h.board.is_ladder(bottom_rung), "the test starts on a ladder")
+	check(not h.board.is_ladder(bottom_rung + Vector2i.DOWN),
+		"with no rung below it")
+
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(h.board, bottom_rung, Enemy.Kind.PICKLE, h.player)
+	h.player.place(bottom_rung + Vector2i.DOWN)
+
+	await h.seconds(3.0)
+	check(enemy.cell.y > bottom_rung.y, "it gets below the bottom of the ladder",
+		"stuck on row %d" % enemy.cell.y)
+	h.teardown()
+
 func _test_burgers_are_half_height() -> void:
 	_begin("burgers are drawn at half height")
 	check(Cfg.BURGER_LAYER_H == Cfg.TILE / 2,
@@ -1139,10 +1186,117 @@ func _test_burgers_are_half_height() -> void:
 	var span: LevelData.Span = LevelData.get_level(0).plates[0]
 	check(h.board.stack_top_row(span) == span.y - h.board.stack(span.x).size(),
 		"the logical stack is still one layer per cell")
-	h.teardown()
 
+## A burger is two buns, and the corners that say so are the ones facing away from
+## the burger: a lid is domed so its top corners round off, a base sits flat so its
+## bottom ones do. Checked on the shipped half-cell layer height, because that is
+## where the rounding either fits or has to be squeezed.
+func _test_buns_are_rounded_the_right_way_up() -> void:
+	_begin("buns are rounded the right way up")
+	var h := int(Cfg.BURGER_LAYER_H)
 
-## The character sheets, checked as images rather than trusted.
+	var lid := Board._layer_insets(Food.Kind.BUN_TOP, h)
+	check(lid[0] > lid[1], "a lid rounds off over its first rows",
+			"%s then %s" % [lid[0], lid[1]])
+	check(lid[h - 1] == 0, "and squares up against the rest of the burger",
+			"bottom row inset %d" % lid[h - 1])
+	check(lid[0] == Board.BUN_ROUND, "by the rounding it is supposed to have",
+			"%d, wanted %d" % [lid[0], Board.BUN_ROUND])
+
+	var base := Board._layer_insets(Food.Kind.BUN_BOTTOM, h)
+	check(base[h - 1] > base[h - 2], "a base rounds off over its last rows",
+			"%s then %s" % [base[h - 2], base[h - 1]])
+	check(base[0] == 0, "and squares up against the rest of the burger",
+			"top row inset %d" % base[0])
+
+	# The two are each other's reflection, which is what makes a burger read as a
+	# burger rather than a box with a box on it.
+	var flipped := PackedInt32Array()
+	for i in h:
+		flipped.append(lid[h - 1 - i])
+	check(base == flipped, "and the pair are mirror images of each other",
+			"lid %s against base %s" % [str(lid), str(base)])
+
+	# The one place they must agree is the join in the middle, where a lid sits on
+	# whatever is under it: both have to be square there or the stack has a step.
+	check(lid[h - 1] == base[0], "with a square join between them",
+			"lid bottom %d, base top %d" % [lid[h - 1], base[0]])
+
+	# Everything between the bun and its neighbours is still a box. A patty with
+	# rounded corners is a patty with a bite out of it.
+	for kind in [Food.Kind.PATTY, Food.Kind.LETTUCE, Food.Kind.TOMATO]:
+		var square := Board._layer_insets(kind, h)
+		var all_zero := true
+		for v in square:
+			if v != 0:
+				all_zero = false
+		check(all_zero, "%s is still square" % Food.DEFS[kind]["name"],
+			str(square))
+
+## The patty is speckled black and the lettuce ribbed white, which is the way round
+## they read at a glance.
+func _test_the_patty_is_black_and_the_lettuce_is_white() -> void:
+	_begin("the patty is black and the lettuce is white")
+	check(Food.TEXTURES.has(Food.Kind.PATTY), "the patty has a texture")
+	check(Food.TEXTURES.has(Food.Kind.LETTUCE), "and so does the lettuce")
+	for kind in [Food.Kind.PATTY, Food.Kind.LETTUCE]:
+		var d: Dictionary = Food.TEXTURES[kind]
+		var name: String = d["name"]
+		var tile: Array = d["tile"]
+		var marks := 0
+		for row in tile:
+			var text: String = row
+			for c in text.length():
+				if text[c] == "#":
+					marks += 1
+		check(marks > 0, "%s texture has marks in it" % name,
+			"%d marks in %d rows" % [marks, tile.size()])
+		# A mark that is not a single pixel is detail nobody can see on a layer half
+		# a cell tall, and a mask wider than the layer is a mask that cannot tile.
+		var widths := PackedInt32Array()
+		for row in tile:
+			widths.append((row as String).length())
+		var one := true
+		for w in widths:
+			if w != widths[0]:
+				one = false
+		check(one, "%s texture rows are all the same width" % name, str(widths))
+		check(widths[0] <= Cfg.TILE, "%s tile is no wider than a cell" % name,
+			"%d px" % widths[0])
+		check(tile.size() <= Cfg.BURGER_LAYER_H,
+			"%s tile is no taller than a layer" % name,
+			"%d rows against %d" % [tile.size(), Cfg.BURGER_LAYER_H])
+
+	# The patty's black is near-black rather than a true black, because a true black
+	# speck is the same colour as the outline and vanishes into the edge.
+	var patty: Color = Food.texture_of(Food.Kind.PATTY)
+	var patty_base: Color = Food.color_of(Food.Kind.PATTY)
+	check(patty != Cfg.COL_OUTLINE, "a patty speck is not the outline's black")
+	check(patty != Color("000000"), "nor a true black",
+		"which would be %s" % str(patty))
+	check(patty.get_luminance() < patty_base.get_luminance(),
+		"and is darker than the patty it is drawn on",
+		"%.3f against %.3f" % [patty.get_luminance(), patty_base.get_luminance()])
+
+	var lettuce: Color = Food.texture_of(Food.Kind.LETTUCE)
+	var lettuce_base: Color = Food.color_of(Food.Kind.LETTUCE)
+	check(lettuce.get_luminance() > lettuce_base.get_luminance(),
+		"a lettuce mark is lighter than the leaf it is drawn on",
+		"%.3f against %.3f" % [lettuce.get_luminance(), lettuce_base.get_luminance()])
+
+	# The mask has to repeat, or a layer narrower than the tile would either be blank
+	# or cropped, and which one depends on the plate it is on.
+	for kind in [Food.Kind.PATTY, Food.Kind.LETTUCE]:
+		var a := Food.texture_at(kind, 0, 0)
+		check(a or not a, "texture_at answers for %s" % Food.DEFS[kind]["name"])
+		check(Food.texture_at(kind, 4, 0) == Food.texture_at(kind, 0, 0),
+			"%s repeats every four columns" % Food.DEFS[kind]["name"])
+		# Negative positions come from nothing the board asks for, but wrapping them
+		# rather than indexing a negative row is cheaper than proving they cannot.
+		check(Food.texture_at(kind, -1, 0) == Food.texture_at(kind, 3, 0),
+			"%s wraps rather than indexing backwards" % Food.DEFS[kind]["name"])
+		check(Food.texture_at(kind, 0, -1) == Food.texture_at(kind, 0, 3),
+			"%s wraps in rows too" % Food.DEFS[kind]["name"])
 ##
 ## The whole point of the sheets is that the art can be replaced with a PNG, so
 ## the things worth protecting are the contract rather than the drawing: every
@@ -1339,7 +1493,6 @@ func _test_sheets() -> void:
 			"%s is drawn in its own colour only" % character,
 			"%d of its own, %d of another nasty's" % [own, others])
 
-
 ## One cell of a character's sheet, measured. `n` non-background pixels, `low` the
 ## lowest row holding any, and `sig` a fingerprint for comparing two frames.
 func _cell(character: String, anim: int, frame: int) -> Dictionary:
@@ -1362,13 +1515,11 @@ func _cell(character: String, anim: int, frame: int) -> Dictionary:
 			colors[c.to_rgba32()] = true
 	return {"n": n, "low": low, "right": right, "sig": sig, "colors": colors}
 
-
 ## One pixel of a character's sheet, in cell coordinates.
 func _pixel(character: String, anim: int, frame: int, at: Vector2i) -> Color:
 	var img := Sheet.texture(character).get_image()
 	var r := Sheet.region(anim, frame)
 	return img.get_pixel(int(r.position.x) + at.x, int(r.position.y) + at.y)
-
 
 ## How many pixels of one colour are in a cell, or in a box within it.
 ##
@@ -1390,7 +1541,6 @@ func _count_in_cell(character: String, anim: int, frame: int, want: Color,
 				n += 1
 	return n
 
-
 ## The most recent popup the game raised, which is how the tests read the short
 ## confirmations pepper and its bonuses put on screen.
 func _last_popup(g: Game) -> String:
@@ -1398,7 +1548,6 @@ func _last_popup(g: Game) -> String:
 	if all.is_empty():
 		return ""
 	return String((all[all.size() - 1] as Dictionary)["text"])
-
 
 ## The pepper key is what spends a charge, not touching a nasty.
 ##
@@ -1475,7 +1624,6 @@ func _test_pepper_is_fired_by_a_key() -> void:
 
 	h.teardown()
 
-
 ## The chef is caught when he and a nasty are touching on the screen.
 ##
 ## This used to be "when they are in the same cell or next to it", which is a
@@ -1522,7 +1670,6 @@ func _test_contact_is_drawn_contact() -> void:
 	check(not g._touching(enemy), "a nasty in the cell below is not touching")
 	h.teardown()
 
-
 ## Food falling on a nasty flattens it, which is the other way past one.
 func _test_falling_food_squashes() -> void:
 	_begin("falling food squashes")
@@ -1555,7 +1702,6 @@ func _test_falling_food_squashes() -> void:
 		"at %s, home %s" % [str(enemy.cell), str(enemy.home_cell)])
 	h.teardown()
 
-
 ## A nasty on top of a part goes down with it, and the part falls two levels.
 func _test_riding_a_part() -> void:
 	_begin("riding a part")
@@ -1586,7 +1732,6 @@ func _test_riding_a_part() -> void:
 		"state is %d" % enemy.state)
 	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH, 3.0)
 	h.teardown()
-
 
 ## The whole point of the ride is that it happens while you play: the chef walks
 ## across a part a nasty is standing on, and the nasty goes down with it. This
@@ -1630,14 +1775,12 @@ func _test_crossing_a_part_carries_the_nasty() -> void:
 		"state is %d" % enemy.state)
 	h.teardown()
 
-
 # --- Game flow -------------------------------------------------------------
-
 
 func _test_game_starts_every_level() -> void:
 	_begin("game starts")
 	for i in LevelData.count():
-		var g := await _Harness.new(self).start_game(i)
+		var g := await _Harness.new(self).start_game(i, false)
 		var label := "level %d" % (i + 1)
 		if g == null:
 			continue
@@ -1655,7 +1798,6 @@ func _test_game_starts_every_level() -> void:
 			"%s starts with pepper in the jar" % label)
 		g.queue_free()
 		await _frame()
-
 
 ## Winning is a state change, not a special case: the last plate to be finished
 ## ends the level.
@@ -1693,7 +1835,6 @@ func _test_burger_completes_the_level() -> void:
 	g.queue_free()
 	await _frame()
 
-
 func _test_running_out_of_chefs() -> void:
 	_begin("running out of chefs")
 	var g := await _Harness.new(self).start_game(0)
@@ -1710,7 +1851,6 @@ func _test_running_out_of_chefs() -> void:
 	g.queue_free()
 	await _frame()
 
-
 ## Being caught puts the chef back on his spawn, so every nasty has to go back to
 ## its own ledge too. Without that a nasty that has parked on the spawn eats the
 ## run chef after chef with no chance to get away, which is how a level ended with
@@ -1724,22 +1864,23 @@ func _test_a_death_resets_the_nasties() -> void:
 	var nasts := g.get_tree().get_nodes_in_group(&"enemies")
 	check(nasts.size() > 0, "the level has enemies to reset")
 
-	# Park every nasty on top of the chef's spawn, which is the situation that
-	# used to eat the whole run.
+	# Park every nasty on top of where the chef will come back to, which is the
+	# situation that used to eat the whole run. He respawns in the middle of the
+	# floor rather than where the level starts him, so that is the cell to use.
 	var homes := []
 	for e in nasts:
 		var enemy := e as Enemy
 		homes.append(enemy.home_cell)
-		enemy.place(g.board.chef_spawn)
+		enemy.place(g.board.respawn_spawn)
 	var parked := true
 	for e in nasts:
-		if (e as Enemy).cell != g.board.chef_spawn:
+		if (e as Enemy).cell != g.board.respawn_spawn:
 			parked = false
-	check(parked, "the test parks every nasty on the spawn")
+	check(parked, "the test parks every nasty on the respawn cell")
 
-	# The chef is moved off his spawn first, so the respawn is a real move and this
-	# can tell "he went back" apart from "he never left".
-	g.player.place(g.board.chef_spawn + Vector2i(1, 0))
+	# The chef is moved off his respawn cell first, so the respawn is a real move
+	# and this can tell "he went back" apart from "he never left".
+	g.player.place(g.board.respawn_spawn + Vector2i(-1, 0))
 	var fell_at := g.player.cell
 	var before := GameState.chefs
 	g._on_player_died()
@@ -1756,8 +1897,17 @@ func _test_a_death_resets_the_nasties() -> void:
 	# instead of waiting on real frames, so the test is not timing dependent.
 	for i in 5:
 		g._process(Game.DEATH_TIME / 5.0)
-	check(g.player.cell == g.board.chef_spawn, "and goes back to his spawn after the beat")
+	# He comes back down under his parachute now, so the beat after the floor is
+	# not instant: it takes the drop. Run it out before asking where he ended up.
+	var guard := 0
+	while g._respawning and guard < 200:
+		g._process(Game.DROP_TIME / 20.0)
+		guard += 1
+	check(g.player.cell == g.board.respawn_spawn,
+			"and goes back to the middle of the floor after the beat",
+			"at %s, respawn is %s" % [str(g.player.cell), str(g.board.respawn_spawn)])
 	check(g.player.anim_state() != Sheet.Anim.DEATH, "no longer wearing the pose")
+	check(not g.player.dropping, "and the canopy is off")
 	check(g.player.is_processing(), "and back in play")
 
 	var all_home := true
@@ -1770,37 +1920,283 @@ func _test_a_death_resets_the_nasties() -> void:
 	# so he is not killed again the instant he respawns.
 	var clear := true
 	for e in nasts:
-		if (e as Enemy).cell == g.board.chef_spawn:
+		if (e as Enemy).cell == g.board.respawn_spawn:
 			clear = false
-	check(clear, "so nobody is left on top of him")
+	check(clear, "so nobody is left on top of where he lands")
+
+	# The complaint belongs where it happened. Reading the spawn instead put "OUCH!"
+	# over the cell the chef was about to appear in and left the cell he was caught
+	# in saying nothing at all, which on every death after the first was the player
+	# being told about a place he was not. So the chef has to be somewhere that is
+	# not his spawn for this to be a test of anything.
+	g.player.place(g.board.chef_spawn + Vector2i(-2, 0))
+	var caught_at := g.player.cell
+	g._on_player_died()
+	var said: Dictionary = g.popups().back()
+	check(said["pos"] == Cfg.cell_to_pixel(caught_at),
+			"the ouch is over the chef, not over his spawn",
+			"at %s, said %s" % [str(caught_at), str(said["pos"])])
+	check(said["pos"] != Cfg.cell_to_pixel(g.board.chef_spawn),
+			"which are not the same cell")
 	g.queue_free()
 	await _frame()
 
+## A popup has to leave the board on its own.
+##
+## They used to never go away: the `t` on each one was written when it was raised
+## and then never read by anything, so the `OUCH!` from the first death was still
+## painted at the end of the level, over whatever the chef had walked to by then,
+## with the score popups piling up behind it. Two seconds is long enough to read
+## "OUCH!" and to look up from the board to find it, and short enough that it is
+## gone before the next one arrives.
+func _test_a_popup_times_out() -> void:
+	_begin("a popup times out")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	g._popup("OUCH!", Cfg.COL_PLATE)
+	g._popup_tween(Cfg.cell_to_pixel(g.player.cell))
+	check(g.popups().size() == 1, "the popup is up when it is raised")
+	var just_under := Game.POPUP_TIME - 0.05
+	g._process(just_under)
+	check(g.popups().size() == 1,
+			"a popup that has not been up for two seconds is still there",
+			"%d left after %.2fs" % [g.popups().size(), just_under])
+	g._process(0.1)
+	check(g.popups().is_empty(),
+			"and is gone once it has",
+			"%d left, texts %s" % [g.popups().size(), str(_popup_texts(g))])
+	g.queue_free()
+	await _frame()
 
-## The four moments the chef is not in charge of his own animation: arriving, being
-## caught, and clearing a level. The pose belongs to the level because in every one
-## of them the chef is not doing anything - the level card is an overlay, he has
-## just been taken off the board, or the last plate is down and he is standing still.
-## What this protects is that a pose is released when the moment passes: a chef who
-## keeps celebrating after the banner is gone is a chef standing on a board he is
-## no longer allowed to play.
+## The texts currently on the board, for a failure message.
+func _popup_texts(g: Game) -> Array:
+	var out: Array = []
+	for p in g.popups():
+		out.append(String((p as Dictionary)["text"]))
+	return out
+
+## Popups age out on their own clocks, so one raised while another is already up
+## gets its own full time rather than inheriting the older one's remaining time.
+func _test_each_popup_ages_on_its_own_clock() -> void:
+	_begin("each popup ages on its own clock")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	g._popup("FIRST", Cfg.COL_PLATE)
+	g._process(Game.POPUP_TIME - 0.05)
+	g._popup("SECOND", Cfg.COL_PLATE)
+	# Long enough for the first to be well past its own two seconds, but only a
+	# moment for the second, which was raised almost at the end of that window.
+	g._process(0.1)
+	var texts := _popup_texts(g)
+	check(texts.size() == 1 and String(texts[0]) == "SECOND",
+			"only the newer one is left, with its own two seconds still to run",
+			"left %s" % str(texts))
+	g.queue_free()
+	await _frame()
+
+## A popup raised while the chef is down still times out. The death beat returns
+## early from _process, so ageing the popups after that branch would have left
+## the `OUCH!` on the board for the rest of the level, which is the bug this whole
+## pair of tests is about.
+func _test_a_popup_ages_out_while_the_chef_is_down() -> void:
+	_begin("a popup ages out while the chef is down")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	g.player.place(g.board.chef_spawn + Vector2i(-2, 0))
+	g._on_player_died()
+	check(g.popups().size() == 1, "the ouch went up when he was caught")
+	# Step the death beat to its end the way the death test does, and keep going,
+	# because the whole point is the frames after he is back on his feet.
+	var guard := 0
+	while g._dying > 0.0 and guard < 200:
+		g._process(Game.DEATH_TIME / 20.0)
+		guard += 1
+	check(g._dying <= 0.0, "and he is back on his feet")
+	g._process(Game.POPUP_TIME)
+	check(g.popups().is_empty(),
+			"but the ouch has timed out with him",
+			"left %s" % str(_popup_texts(g)))
+	g.queue_free()
+	await _frame()
+
+## The chef comes back to the middle of the bottom floor, and he comes back down.
+##
+## He used to be put back on the cell the level was authored to start him in, which
+## on every level was off to one side. That read as the level restarting rather than
+## as the chef being put back on his feet, and it walked him across the board from
+## wherever he had actually died. It also appeared rather than descended, so the
+## same chef was in two places within a frame of being caught.
+func _test_a_respawn_is_the_middle_of_the_floor_and_a_descent() -> void:
+	_begin("a respawn is the middle of the floor and a descent")
+	for i in LevelData.count():
+		var g := await _Harness.new(self).start_game(i)
+		if g == null:
+			return
+		var cell: Vector2i = g.board.respawn_spawn
+		# Middle of the floor: standable, on the bottom walkable row, and as close
+		# to the middle of the board as the level allows.
+		check(not g.board.blocks_player(cell),
+				"level %d: the respawn cell is somewhere to stand" % (i + 1),
+				"at %s" % str(cell))
+		check(g.board.floor_below(cell),
+				"level %d: and on the bottom row, standing on something" % (i + 1),
+				"at %s" % str(cell))
+		check(cell != g.board.chef_spawn,
+				"level %d: which is not the corner the level starts him in" % (i + 1),
+				"both are %s" % str(cell))
+		# Caught somewhere far from the middle, so "went back" is a real move.
+		var far := Vector2i(1, cell.y) if cell.x > Cfg.GRID_W / 2 else Vector2i(Cfg.GRID_W - 2, cell.y)
+		g.player.place(far)
+		g._on_player_died()
+		var beat := 0
+		while g._dying > 0.0 and beat < 400:
+			g._process(Game.DEATH_TIME / 20.0)
+			beat += 1
+		# The beat after the floor is the descent, so he is in the air, not on the
+		# cell, and the canopy is with him.
+		check(g._respawning,
+				"level %d: he comes back down rather than appearing" % (i + 1))
+		check(g.player.dropping,
+				"level %d: under his parachute on the way" % (i + 1))
+		check(g.player.position.y < Cfg.cell_to_pixel(cell).y,
+				"level %d: from above the floor" % (i + 1),
+				"at %s, floor is %s" % [str(g.player.position), str(Cfg.cell_to_pixel(cell))])
+		check(not g.player.is_processing(),
+				"level %d: and not taking input while he is in the air" % (i + 1))
+		var drop := 0
+		while g._respawning and drop < 400:
+			g._process(Game.DROP_TIME / 20.0)
+			drop += 1
+		check(g.player.cell == cell,
+				"level %d: and lands in the middle of the floor" % (i + 1),
+				"at %s, wanted %s" % [str(g.player.cell), str(cell)])
+		check(not g.player.dropping, "level %d: with the canopy off" % (i + 1))
+		check(g.player.is_processing(), "level %d: and back in play" % (i + 1))
+		g.queue_free()
+		await _frame()
+
+## The respawn drop belongs to the level, not the chef, so it survives a pause and
+## is released by the level rather than by the chef's own clock.
+##
+## A chef who is not processing cannot run a clock of his own, so a drop that lived
+## on his `_process` would either not run at all or, worse, run at double speed the
+## moment the player unpaused. This is the same contract INTRO already relies on.
+func _test_a_respawn_drop_is_on_the_level_clock() -> void:
+	_begin("a respawn drop is on the level clock")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	g.player.place(g.board.chef_spawn + Vector2i(-2, 0))
+	g._on_player_died()
+	var beat := 0
+	while g._dying > 0.0 and beat < 400:
+		g._process(Game.DEATH_TIME / 20.0)
+		beat += 1
+	check(g._respawning, "he is coming back down")
+	# Halfway, so the drop is unmistakably still in flight.
+	g._process(Game.DROP_TIME * 0.5)
+	var mid := g.player.position
+	check(g._respawning, "and still in the air halfway through",
+			"at %s" % str(mid))
+	# Paused: the drop must not move, or unpausing would jump him down the rest of
+	# the way in a single frame.
+	g.paused = true
+	g._process(Game.DROP_TIME * 0.5)
+	check(g.player.position == mid,
+			"a paused drop holds him where he was",
+			"at %s, was %s" % [str(g.player.position), str(mid)])
+	g.paused = false
+	var drop := 0
+	while g._respawning and drop < 400:
+		g._process(Game.DROP_TIME / 20.0)
+		drop += 1
+	check(g.player.cell == g.board.respawn_spawn,
+			"and lets go once the player is back",
+			"at %s, respawn is %s" % [str(g.player.cell), str(g.board.respawn_spawn)])
+	g.queue_free()
+	await _frame()
+
+## A level that ends while the chef is still coming back down must not leave the
+## descent running into the next one, or he drops out of the sky over a board he
+## has not started yet.
+func _test_a_level_ending_mid_descent_clears_the_respawn() -> void:
+	_begin("a level ending mid-descent clears the respawn")
+	var g := await _Harness.new(self).start_game(0)
+	if g == null:
+		return
+	g.player.place(g.board.chef_spawn + Vector2i(-2, 0))
+	g._on_player_died()
+	var beat := 0
+	while g._dying > 0.0 and beat < 400:
+		g._process(Game.DEATH_TIME / 20.0)
+		beat += 1
+	g._process(Game.DROP_TIME * 0.4)
+	check(g._respawning, "he is in the air when the level ends")
+	g._enter(Game.Phase.LEVEL_CLEAR)
+	check(not g._respawning, "so the level ending clears the descent")
+	check(not g.player.dropping, "and takes the canopy off with it")
+	g.queue_free()
+	await _frame()
+
+## The moments the chef is not in charge of his own animation: arriving, being
+## caught, and clearing a level. Arriving and dying are the level's because the
+## chef is not doing anything - he is on a parachute, or he is on the floor, or the
+## last plate is down and he is standing still. What this protects is that each is
+## released when its moment passes: a chef who keeps celebrating after the banner is
+## gone is a chef standing on a board he is no longer allowed to play, and a canopy
+## left hanging over a board he has landed on is the same bug wearing a parachute.
 func _test_the_level_directs_the_chef() -> void:
 	_begin("the level directs the chef")
-	var g := await _Harness.new(self).start_game(0)
+	var g := await _Harness.new(self).start_game(0, false)
 	if g == null:
 		return
 	GameState.reset_run()
 
-	# Start_level is where the level card goes up, and the chef is under the
-	# parachute while it is there. No drop: the card is static, so a falling chef
-	# would land somewhere the player has not been shown.
+	# A level opens with the chef coming down under his parachute: he starts at the
+	# top of the screen, the canopy is drawn on the cell above him, both fall to
+	# the spawn, and the canopy is gone once he lands.
 	check(g.phase == Game.Phase.INTRO, "a level starts on its card")
-	check(g.player.anim_state() == Sheet.Anim.PARACHUTE, "and the chef comes in under a parachute")
-	check(g.player.anim_frame(Sheet.Anim.PARACHUTE) == 0, "on the only frame it has")
+	check(g.player.dropping, "and the chef is on his way down")
+
+	# High enough that the fall is a fall, low enough that the whole rig is on
+	# screen. The canopy goes in the cell above his, so a chef whose canopy is flush
+	# with the top edge has all of him below it.
+	var canopy_top := g.player.position.y + Cfg.TILE * 0.5 - Cfg.TILE - Sheet.offset().y
+	check(canopy_top >= 0.0, "the canopy comes in from the top of the screen",
+			"top edge at y %.1f" % canopy_top)
+	check(g.player.position.y < Cfg.cell_to_pixel(g.board.chef_spawn).y,
+			"from well above where he lands")
+	check(g.player.anim_state() == Sheet.Anim.IDLE,
+			"hanging, which is what idle looks like from a canopy")
+
+	# The card and the descent are one beat: the card is up for as long as the fall
+	# takes, so there is no point in the level where he is playing under a canopy.
+	check(g._phase_t <= Game.DROP_TIME, "the card holds for the drop")
+
+	# Landing takes him onto the spawn cell exactly, drops the canopy, and puts him
+	# back under his own control. Driven through the game's own clock rather than by
+	# waiting on frames, so the test is not timing dependent.
+	var start_y := g.player.position.y
+	# The intro lands on the respawn cell - the middle of the bottom floor - rather
+	# than the level's authored start.
+	var landing := Cfg.cell_to_pixel(g.board.respawn_spawn).y
+	g._process(Game.DROP_TIME * 0.5)
+	check(g.player.dropping, "he is still coming down halfway")
+	check(g.player.position.y > start_y, "and lower than he was",
+			"y went %.1f -> %.1f" % [start_y, g.player.position.y])
+	check(g.player.position.y < landing, "but not there yet")
+	g._process(Game.DROP_TIME * 0.5)
+	check(not g.player.dropping, "the canopy is gone when he lands")
+	check(g.player.cell == g.board.respawn_spawn, "and he is on his spawn")
+	check(is_equal_approx(g.player.position.y, landing), "on the exact cell")
 
 	g._enter(Game.Phase.PLAYING)
-	check(g.player.anim_state() != Sheet.Anim.PARACHUTE, "the parachute is for the card only")
-	check(g.player.anim_state() == Sheet.Anim.IDLE, "and from there he is playing again")
+	check(not g.player.dropping, "the canopy is for the descent only")
+	check(g.player.anim_state() == Sheet.Anim.IDLE, "and from there he is playing")
+	check(g.player.is_processing(), "and back in control")
 
 	# Spraying is a punch for exactly as long as the puff is in the air, and the
 	# throw plays out over the puff rather than looping at its own speed. The
@@ -1837,9 +2233,7 @@ func _test_the_level_directs_the_chef() -> void:
 	g.queue_free()
 	await _frame()
 
-
 # --- Fixtures --------------------------------------------------------------
-
 
 ## A bare grid with one plate, used by the rule tests that do not care about the
 ## shape of a real level. Ledges on rows 1/4/7/10 and the floor on 14, matching
@@ -1847,6 +2241,22 @@ func _test_the_level_directs_the_chef() -> void:
 func _synthetic_map() -> PackedStringArray:
 	var map := _blank_map()
 	map[13] = "OO" + ".".repeat(Cfg.GRID_W - 2)
+	return map
+
+## A map with one ladder running the full height of the building, so both ends of
+## it can be stood on.
+##
+## The ladder is a single column of rungs with solid platform either side of the
+## top rung and open floor above it - the shape every shipped level has, and the
+## shape that strands a nasty. The chef starts on the ground floor and the walk row
+## above the ladder is where a climbing nasty is trying to get to.
+func _full_height_ladder_map() -> PackedStringArray:
+	var map := _blank_map()
+	map[1] = "#".repeat(Cfg.GRID_W - 2) + "=" + "#"
+	map[2] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
+	map[3] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
+	map[4] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
+	map[13] = "O" + ".".repeat(Cfg.GRID_W - 1)
 	return map
 
 
@@ -1877,13 +2287,11 @@ func _blank_map() -> PackedStringArray:
 			map.append(".".repeat(Cfg.GRID_W))
 	return map
 
-
 func _map(rows: Array) -> PackedStringArray:
 	var out := PackedStringArray()
 	for r in rows:
 		out.append(String(r))
 	return out
-
 
 func _span(ch: String, x: int, width: int, y: int) -> LevelData.Span:
 	var span := LevelData.Span.new()
@@ -1893,27 +2301,25 @@ func _span(ch: String, x: int, width: int, y: int) -> LevelData.Span:
 	span.y = y
 	return span
 
-
 func _cells(at: Vector2i, width: int) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	for i in width:
 		out.append(at + Vector2i(i, 0))
 	return out
 
-
 func _add_ingredient(h: _Harness, board: Board, ch: String, x: int, width: int, y: int) -> Ingredient:
 	var ing := Ingredient.new()
 	h.game_node.add_child(ing)
+	# The game files parts in this group, and the crush rule finds them by it, so the
+	# harness has to file them the same way or the rule is invisible under test.
+	ing.add_to_group(&"ingredients")
 	ing.setup(board, _span(ch, x, width, y))
 	return ing
-
 
 func _frame() -> void:
 	await (Engine.get_main_loop() as SceneTree).process_frame
 
-
 # --- Harness ---------------------------------------------------------------
-
 
 ## Minimal stand-in for the Game scene: builds a board and a player wired up the
 ## same way, so tests exercise production code paths rather than copies.
@@ -1944,13 +2350,23 @@ class _Harness:
 		await frame()
 
 	## A real Game node, for testing level flow.
-	func start_game(level_index: int) -> Game:
+	## Starts a level, and by default skips the level card so the chef is standing
+	## on the board and the game is in play.
+	##
+	## Skipping steps the phase on rather than waiting it out: the card is three
+	## seconds of real game time now, and most of what these tests do is play at the
+	## chef rather than watch him arrive. A chef who is still under his parachute
+	## has a position at the top of the screen and a cell at the bottom of it, and
+	## every test that checks the two agree would be checking a lie.
+	func start_game(level_index: int, play: bool = true) -> Game:
 		GameState.reset_run()
 		game_node = Node2D.new()
 		owner.add_child(game_node)
 		var g := Game.new()
 		game_node.add_child(g)
 		g.start_level(level_index)
+		if play:
+			g._advance()
 		await frame()
 		return g
 
@@ -2004,13 +2420,468 @@ class _Harness:
 		Input.action_press(action)
 		Input.action_release(action)
 
-
 # --- Assertions ------------------------------------------------------------
 
 
+## A falling part flattens what it passes through, not only what it lands on.
+##
+## The part's grid cell jumps straight to the row it lands in, so the rows in between
+## exist only as the band the fall reports. A nasty in one of them used to be invisible,
+## because the old check looked its own cell up in the grid.
+func _test_falling_food_crushes_what_it_passes() -> void:
+	_begin("falling food crushes what it passes through")
+	var h := _Harness.new(self)
+	# An open shaft down column 4, clear of the test map's ledges, with a ladder for a
+	# nasty to hold on to part way down.
+	var map := _blank_map()
+	for y in Cfg.GRID_H:
+		map[y] = ".".repeat(Cfg.GRID_W)
+	map[Cfg.GRID_H - 1] = "#".repeat(Cfg.GRID_W)
+	var col := 4
+	for y in range(2, 13):
+		var row: String = map[y]
+		map[y] = row.substr(0, col) + "=" + row.substr(col + 1)
+	await h.setup(map)
+	if h.board == null:
+		return
+	var board := h.board
+
+	# A nasty holding a rung part way down the shaft, nowhere near either end of the
+	# fall, and stunned so it holds still and this measures the crush rather than two
+	# actors moving at once. Being stunned must not make it safe.
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(board, Vector2i(col, 8), Enemy.Kind.PICKLE, h.player)
+	enemy.place(Vector2i(col, 8))
+	enemy.stun(30.0)
+	check(board.is_ladder(Vector2i(col, 8)), "the nasty is on a rung")
+
+	var ing := _add_ingredient(h, board, "m", col, 1, 5)
+	ing.knock()
+	check(ing.rest_row > 8, "the part falls past the nasty",
+		"part landed at row %d, nasty at row 8" % ing.rest_row)
+	check(board.ingredient_at(Vector2i(col, 8)) == null,
+		"and never rests in the nasty's cell")
+	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH, 2.0)
+	check(enemy.state == Enemy.St.SQUASH, "a nasty in the part's path is flattened")
+
+	# A nasty in another column is untouched: the rule is what the part passes
+	# through, not everything below it.
+	var safe := Enemy.new()
+	h.game_node.add_child(safe)
+	safe.setup(board, Vector2i(8, 8), Enemy.Kind.EGG, h.player)
+	safe.place(Vector2i(8, 8))
+	safe.stun(30.0)
+	var ing2 := _add_ingredient(h, board, "m", col, 1, 5)
+	ing2.knock()
+	await h.frames(10)
+	check(safe.state != Enemy.St.SQUASH, "a nasty in another column is not crushed")
+	await h.teardown()
+
+
+## The exact report: a nasty on a ladder under a falling part lived, because the part
+## occupies no cell between the row it is knocked from and the row it lands in.
+func _test_food_crushes_a_nasty_on_a_ladder() -> void:
+	_begin("falling food crushes a nasty on a ladder")
+	var h := _Harness.new(self)
+	var map := _blank_map()
+	for y in Cfg.GRID_H:
+		map[y] = ".".repeat(Cfg.GRID_W)
+	map[Cfg.GRID_H - 1] = "#".repeat(Cfg.GRID_W)
+	var col := 4
+	for y in range(2, 13):
+		var row: String = map[y]
+		map[y] = row.substr(0, col) + "=" + row.substr(col + 1)
+	await h.setup(map)
+	if h.board == null:
+		return
+	var board := h.board
+
+	var enemy := Enemy.new()
+	h.game_node.add_child(enemy)
+	enemy.setup(board, Vector2i(col, 8), Enemy.Kind.PICKLE, h.player)
+	enemy.place(Vector2i(col, 8))
+	check(board.is_ladder(Vector2i(col, 8)), "the nasty is on a rung")
+
+	var ing := _add_ingredient(h, board, "m", col, 1, 5)
+	ing.knock()
+	await h.until(func() -> bool: return enemy.state == Enemy.St.SQUASH, 2.0)
+	check(enemy.state == Enemy.St.SQUASH,
+		"a nasty on a ladder is flattened by a part falling past",
+		"state %d, part row %d" % [enemy.state, ing.rest_row])
+	await h.teardown()
+
+
+## The run opens with the chef dropping into the middle of the bottom floor, not into
+## whichever cell of it the map had room for a `@` in.
+func _test_intro_lands_in_the_centre() -> void:
+	_begin("the intro drop lands in the centre")
+	var h := _Harness.new(self)
+	var g: Game = await h.start_game(0, false)
+	if g == null:
+		return
+	var spawn := g.board.respawn_spawn
+	check(g.player.cell == spawn, "the chef comes in at the respawn cell",
+		"opened at %s, respawn is %s" % [str(g.player.cell), str(spawn)])
+
+	# The middle of the floor it can stand on, rather than an edge. Measured as the
+	# distance to the nearest wall along that row, so "centre" is checked as the
+	# property the player sees and not as a particular index.
+	var row := spawn.y
+	var left := spawn.x
+	while left > 0 and not g.board.blocks_player(Vector2i(left - 1, row)):
+		left -= 1
+	var right := spawn.x
+	while right < Cfg.GRID_W - 1 and not g.board.blocks_player(Vector2i(right + 1, row)):
+		right += 1
+	var margin := mini(spawn.x - left, right - spawn.x)
+	check(margin >= 2, "and is clear of both corners",
+		"landed %d cells from the nearest edge of its floor" % margin)
+	await h.teardown()
+
+
+## Sound effects. The same contract the sheets are held to, for the same reason: the
+## effects are generated and committed, and the property that makes them worth
+## having is that a replacement is a WAV with the right name. That is only true if
+## the committed files are what the recipes produce and every name the game asks for
+## resolves to something, so both are checked here rather than discovered by
+## listening for a missing sound in a level.
+func _test_sfx() -> void:
+	_begin("sound effects")
+
+	# A recipe with no file, or a file with no recipe, is one of the two ways this
+	# drifts, and neither shows up as a crash - the first is silent, the second is a
+	# file nothing generates. So both directions are checked.
+	var missing: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		if not ResourceLoader.exists(Sfx.DIR + name + ".wav"):
+			missing.append(name)
+	check(missing.is_empty(),
+		"every effect has a committed file",
+		"run tools/make_sfx.gd then --import; missing: %s" % ", ".join(missing))
+
+	var ungenerated: Array[String] = []
+	var found := _sfx_files()
+	for path: String in found:
+		var name := path.get_file().get_basename()
+		if not name in SfxArt.SOUNDS:
+			ungenerated.append(name)
+	check(ungenerated.is_empty(),
+		"every committed effect has a recipe",
+		"no recipe generates: %s" % ", ".join(ungenerated))
+
+	# A stream that will not load is the same failure as a missing file, one step
+	# later, and this is the step that says so rather than the game doing it at
+	# runtime in front of a player.
+	var unloadable: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		if Sfx.stream_for(name) == null:
+			unloadable.append(name)
+	check(unloadable.is_empty(),
+		"every effect loads as a stream",
+		"did not load: %s" % ", ".join(unloadable))
+
+	# The importer re-encodes by default, to QOA, which is lossy and also resamples
+	# out of 16 bit. That would leave three different things for one effect: the WAV
+	# on disk, the recipe that made it, and the samples the game actually plays -
+	# and the comparison below could never hold. So the import is forced to lossless
+	# PCM, and checked here, because it is set in an .import file that is easy to
+	# lose in a move and impossible to notice by listening to a compression artefact.
+	var lossy: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		var stream := Sfx.stream_for(name) as AudioStreamWAV
+		if stream == null:
+			continue
+		if stream.format != AudioStreamWAV.FORMAT_16_BITS:
+			lossy.append("%s is not 16 bit" % name)
+		if stream.stereo:
+			lossy.append("%s is not mono" % name)
+		if stream.mix_rate != SfxArt.RATE:
+			lossy.append("%s is %d Hz" % [name, stream.mix_rate])
+	check(lossy.is_empty(),
+		"every effect is imported losslessly as 16 bit mono at one rate",
+		"check compress/mode=0 in the .import files; %s" % "; ".join(lossy))
+
+	# An effect has to be long enough to hear and short enough not to be in the way
+	# of the next one. A file of near-silence fails this too, which is the point: a
+	# generator that produced silence at the right length would otherwise pass
+	# everything else here.
+	var out_of_range: Array[String] = []
+	var silent: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		var stream := Sfx.stream_for(name) as AudioStreamWAV
+		if stream == null:
+			continue
+		var secs := float(stream.data.size() / 2) / float(stream.mix_rate)
+		if secs < 0.03 or secs > 1.0:
+			out_of_range.append("%s is %.3fs" % [name, secs])
+		if _sfx_peak(stream) < 0.05:
+			silent.append(name)
+	check(out_of_range.is_empty(),
+		"every effect is long enough to hear and short enough not to crowd",
+		"; ".join(out_of_range))
+	check(silent.is_empty(),
+		"no effect is silent",
+		"silent: %s" % ", ".join(silent))
+
+	# An effect that starts or ends at full volume is a click, and clicks are worse
+	# than the sound they are attached to. This is the one property of the generated
+	# audio that nothing else here would notice.
+	var clicking: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		var stream := Sfx.stream_for(name) as AudioStreamWAV
+		if stream == null:
+			continue
+		var edges := _sfx_edges(stream)
+		if edges["head"] > 0.2 or edges["tail"] > 0.05:
+			clicking.append("%s starts %.2f ends %.2f"
+					% [name, edges["head"], edges["tail"]])
+	check(clicking.is_empty(),
+		"no effect clicks in or out",
+		"; ".join(clicking))
+
+	# Two effects with the same samples are one effect with two names, and the game
+	# pays for the distinction in code. Two of these were identical in an early
+	# draft, which is why it is checked rather than assumed.
+	var identical: Array[String] = []
+	var by_bytes := {}
+	for name: String in SfxArt.SOUNDS:
+		var stream := Sfx.stream_for(name) as AudioStreamWAV
+		if stream == null:
+			continue
+		# The samples themselves, compared as bytes: a digest of the samples would
+		# turn a collision into a passing check, and the samples are what "the same
+		# sound twice" means.
+		var key := stream.data
+		if by_bytes.has(key):
+			identical.append("%s == %s" % [name, by_bytes[key]])
+		else:
+			by_bytes[key] = name
+	check(identical.is_empty(),
+		"every effect is a different sound",
+		"; ".join(identical))
+
+	# The committed WAVs have to be what the recipes produce, or a regenerated
+	# effect is one nobody noticed - a hand-edited file and a changed recipe are
+	# told apart here rather than both passing.
+	#
+	# Read off disk rather than off the loaded stream, which is the whole point. The
+	# stream comes from .godot/imported/, and that is only refreshed by an explicit
+	# --import, so comparing against it passes for a file that was regenerated and
+	# never imported - which looks and plays fine while no longer being reproducible
+	# from the project, and is the exact failure the sheet drift check was written
+	# for. Reading the file is also the only version of this check that a fresh
+	# clone can run before it has imported anything.
+	var drifted: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		var want := SfxArt.wav(name)
+		var got := FileAccess.get_file_as_bytes(Sfx.DIR + name + ".wav")
+		if got != want:
+			drifted.append(name)
+	check(drifted.is_empty(),
+		"the committed effects match the recipes that generate them",
+		"run tools/make_sfx.gd and --import, then: %s" % ", ".join(drifted))
+
+	# And the files have to be well-formed WAVs rather than merely the right bytes.
+	# Parsed here rather than trusted to the importer, because a header that lies
+	# about its own size imports to something plausible and plays.
+	var malformed: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		var read := _sfx_read_wav(Sfx.DIR + name + ".wav")
+		if read["error"] != "":
+			malformed.append("%s: %s" % [name, read["error"]])
+			continue
+		if read["rate"] != SfxArt.RATE or read["bits"] != 16 or read["channels"] != 1:
+			malformed.append("%s: %d ch %d bit %d Hz" % [name, read["channels"],
+					read["bits"], read["rate"]])
+	check(malformed.is_empty(),
+		"every effect is a well formed 16 bit mono WAV",
+		"; ".join(malformed))
+
+	# Every name the game asks for has to be a name the generator makes. This is the
+	# check that catches a typo in a call site, which is otherwise a silent effect
+	# and nothing else at all - a missing file is reported by Sfx at runtime, but a
+	# report in a log is not a failed test.
+	var asked := _sfx_names_asked_for()
+	var unknown: Array[String] = []
+	for name: String in asked:
+		if not name in SfxArt.SOUNDS:
+			unknown.append(name)
+	check(unknown.is_empty(),
+		"every effect the game asks for is one that exists",
+		"asked for but not generated: %s" % ", ".join(unknown))
+
+	# The pool, because a player that cuts itself off is a fault nothing else here
+	# would catch: the effect still plays, still loads, and still matches its recipe.
+	# Asking for one more than the pool holds is the case - the second layer of the
+	# same sound has to be heard as well as the first, or a chain reaction quietly
+	# loses half its noise.
+	var players := _sfx_players()
+	check(players.size() >= 2,
+		"the effect pool can overlap at least two sounds",
+		"pool holds %d" % players.size())
+
+	# Three plows of the same effect at once must be three separate voices, not one
+	# restarted three times - which is the difference between hearing a chain
+	# reaction and hearing a single thud under it.
+	var asks := mini(3, players.size())
+	for i in asks:
+		Sfx.play("jump")
+	var playing := 0
+	for p: AudioStreamPlayer in players:
+		if p.playing:
+			playing += 1
+	check(playing == asks,
+		"each play lands on its own player",
+		"%d playing after %d plays" % [playing, asks])
+
+	# The reverse, so an effect that was generated and never wired up is visible.
+	# An unused effect is not a bug yet - the win jingle is a placeholder for a
+	# later pass - but it should not be invisible either.
+	var unused: Array[String] = []
+	for name: String in SfxArt.SOUNDS:
+		if not name in asked:
+			unused.append(name)
+	print("  [color=grey]note[/color] generated but never asked for: %s"
+			% (", ".join(unused) if not unused.is_empty() else "none"))
+
+
+## The committed effect files, by name.
+func _sfx_files() -> Array[String]:
+	var out: Array[String] = []
+	var dir := DirAccess.open(Sfx.DIR)
+	if dir == null:
+		return out
+	for f in dir.get_files():
+		if f.get_extension() == "wav":
+			out.append(f)
+	return out
+
+
+## Reads a RIFF/WAVE file and reports what it actually declares, by parsing the
+## chunks rather than assuming a 44 byte header.
+##
+## Returns `error` empty on success, alongside `rate`, `bits`, `channels` and
+## `samples` (the raw little-endian 16 bit body). Deliberately does not use the
+## importer: the point is to check the file, and the importer is one of the things
+## that can be wrong about it.
+func _sfx_read_wav(path: String) -> Dictionary:
+	var out := {"error": "", "rate": 0, "bits": 0, "channels": 0, "samples": PackedByteArray()}
+	var b := FileAccess.get_file_as_bytes(path)
+	if b.size() < 44:
+		out["error"] = "only %d bytes" % b.size()
+		return out
+	if b.slice(0, 4).get_string_from_ascii() != "RIFF":
+		out["error"] = "no RIFF"
+		return out
+	# The size field covers everything after itself, so it is a real check on the
+	# generator rather than a formality.
+	var riff := b.decode_u32(4)
+	if riff != b.size() - 8:
+		out["error"] = "RIFF says %d, file is %d" % [riff, b.size() - 8]
+		return out
+	if b.slice(8, 12).get_string_from_ascii() != "WAVE":
+		out["error"] = "no WAVE"
+		return out
+	var at := 12
+	while at + 8 <= b.size():
+		var id := b.slice(at, at + 4).get_string_from_ascii()
+		var size := b.decode_u32(at + 4)
+		if at + 8 + size > b.size():
+			out["error"] = "%s chunk claims %d bytes, %d left" % [id, size, b.size() - at - 8]
+			return out
+		match id:
+			"fmt ":
+				if size < 16:
+					out["error"] = "fmt is %d bytes" % size
+					return out
+				if b.decode_u16(at + 8) != 1:
+					out["error"] = "not PCM"
+					return out
+				out["channels"] = b.decode_u16(at + 10)
+				out["rate"] = b.decode_u32(at + 12)
+				out["bits"] = b.decode_u16(at + 22)
+			"data":
+				out["samples"] = b.slice(at + 8, at + 8 + size)
+		# Chunks are padded to an even length, which a sample body of odd size would
+		# otherwise be silently misread past.
+		at += 8 + size + (size % 2)
+	if out["rate"] == 0:
+		out["error"] = "no fmt chunk"
+	elif out["samples"].is_empty():
+		out["error"] = "no data chunk"
+	return out
+
+
+## The pool's players, in order.
+func _sfx_players() -> Array[AudioStreamPlayer]:
+	var out: Array[AudioStreamPlayer] = []
+	for child in Sfx.get_children():
+		var p := child as AudioStreamPlayer
+		if p != null:
+			out.append(p)
+	return out
+
+
+## The loudest sample in a stream, as a fraction of full scale.
+func _sfx_peak(stream: AudioStreamWAV) -> float:
+	var peak := 0
+	for i in range(0, stream.data.size() - 1, 2):
+		peak = maxi(peak, absi(stream.data.decode_s16(i)))
+	return float(peak) / 32767.0
+
+
+## How far a stream's first and last samples are from silence, as fractions of its
+## own peak. Relative rather than absolute, so a quiet effect is not judged against
+## a loud one's scale.
+func _sfx_edges(stream: AudioStreamWAV) -> Dictionary:
+	var peak := maxf(_sfx_peak(stream), 0.001)
+	var head := 0.0
+	var tail := 0.0
+	if stream.data.size() >= 2:
+		head = absf(float(stream.data.decode_s16(0)) / 32767.0) / peak
+		tail = absf(float(stream.data.decode_s16(stream.data.size() - 2)) / 32767.0) / peak
+	return {"head": head, "tail": tail}
+
+
+## Every effect name the game plays, read out of the source rather than maintained
+## by hand. A hand-maintained list would drift from the call sites, which is the
+## exact failure this check exists to catch - so it is read from the scripts.
+func _sfx_names_asked_for() -> Array[String]:
+	var out: Array[String] = []
+	var dir := DirAccess.open("res://scripts")
+	if dir == null:
+		return out
+	var stack: Array[String] = []
+	for f in dir.get_files():
+		stack.append("res://scripts/" + f)
+	# Two levels deep, which is where the game and the player live.
+	for sub: String in ["game", "player", "items", "food", "enemies"]:
+		var d := DirAccess.open("res://scripts/" + sub)
+		if d == null:
+			continue
+		for f in d.get_files():
+			stack.append("res://scripts/%s/%s" % [sub, f])
+	for path: String in stack:
+		if not path.ends_with(".gd") or path.ends_with("sfx.gd"):
+			continue
+		var text := FileAccess.get_file_as_string(path)
+		for pattern: String in ['Sfx.play("']:
+			var at := 0
+			while true:
+				var found := text.find(pattern, at)
+				if found < 0:
+					break
+				var start := found + pattern.length()
+				var end := text.find('"', start)
+				if end < 0:
+					break
+				out.append(text.substr(start, end - start))
+				at = end
+	return out
+
 func _begin(name: String) -> void:
 	print_rich("\n[b]%s[/b]" % name)
-
 
 func check(condition: bool, description: String, detail: String = "") -> void:
 	if condition:

@@ -15,6 +15,14 @@ enum Tile { EMPTY, PLATFORM, WALL, LADDER, PLATE }
 
 const T := Cfg.TILE
 
+## How far a bun's domed corners are rounded, in pixels, and over how many rows.
+## Two rows of a half-cell layer is the most curve that leaves pixels either side
+## of it to draw the outline in.
+const BUN_ROUND := 2
+
+## How tall the highlight strip along the top of a burger layer is.
+const ACCENT_H := 2
+
 ## Tile type per cell, indexed y * Cfg.GRID_W + x.
 var _tiles := PackedByteArray()
 ## Ingredients by cell. An ingredient is wide, so it holds one entry per cell
@@ -30,6 +38,9 @@ var level: LevelData.Level
 var chef_spawn := Vector2i(1, 1)
 var enemy_spawns: Array[Vector2i] = []
 var enemy_kinds := {}
+## Where the chef comes back to after being caught, which is not where he started
+## the level. See respawn_cell().
+var respawn_spawn := Vector2i(1, 1)
 
 
 func setup(lv: LevelData.Level) -> void:
@@ -47,6 +58,10 @@ func setup(lv: LevelData.Level) -> void:
 		var row: String = lv.map[y]
 		for x in mini(row.length(), Cfg.GRID_W):
 			_place(x, y, row[x])
+
+	# After the map is parsed, not before: this reads the tiles to find somewhere to
+	# stand, and asked any earlier every cell is still EMPTY and it picks a wall.
+	respawn_spawn = _find_respawn_cell()
 
 	# Every plate starts with a bottom bun on it. A burger is assembled from the
 	# bottom up, so this is the one part that is never in the maze: there would
@@ -105,6 +120,45 @@ func floor_below(cell: Vector2i) -> bool:
 
 func is_ladder(cell: Vector2i) -> bool:
 	return tile_at(cell) == Tile.LADDER
+
+
+## The centre of the bottom floor: where the chef comes back to after a death.
+##
+## Every level was sending him back to the cell the level was authored to start him
+## in, which on all three was off to one side. That reads as the level restarting
+## rather than the chef being put back on his feet, and on a level whose bottom
+## floor starts further right it walked him a long way back from wherever he
+## actually died. The middle of the floor is the same on every level and is where
+## the eye already is, since the whole board is built around it.
+##
+## Scans the bottom walkable row and takes the middle cell that is not a wall, a
+## ledge or a plate, so a level that hangs a platform across the middle drops him
+## just clear of it rather than inside it. Falls back to the level's own spawn if a
+## level has no floor at all to speak of, which is better than returning a cell in
+## a wall and leaving the chef stuck in it.
+func _find_respawn_cell() -> Vector2i:
+	var row := Cfg.GRID_H - 1
+	# The bottom row is a wall on every level so far; the floor is the row above
+	# it. Walk up until a row has somewhere to stand rather than assuming the
+	# depth, so a level with a thicker base still works.
+	while row > 0 and not _row_has_a_stand(row):
+		row -= 1
+	var open: Array[Vector2i] = []
+	for x in Cfg.GRID_W:
+		var cell := Vector2i(x, row)
+		if not blocks_player(cell) and tile_at(cell) != Tile.PLATE:
+			open.append(cell)
+	if open.is_empty():
+		return chef_spawn
+	return open[open.size() / 2]
+
+
+## Whether any cell of a row is somewhere an actor can stand.
+func _row_has_a_stand(row: int) -> bool:
+	for x in Cfg.GRID_W:
+		if not blocks_player(Vector2i(x, row)):
+			return true
+	return false
 
 
 func is_plate(cell: Vector2i) -> bool:
@@ -280,11 +334,118 @@ func _draw_burger(plate: LevelData.Span) -> void:
 	# Bottom-to-top, so the first entry draws lowest and the lid ends up on top.
 	var pile := stack(plate.x)
 	for i in pile.size():
-		var kind: int = pile[i]
-		var r := burger_layer(plate, i)
-		draw_rect(r, Food.color_of(kind))
-		draw_rect(Rect2(r.position, Vector2(r.size.x, 2)), Food.accent_of(kind))
-		draw_rect(r, Cfg.COL_OUTLINE, false, 1.0)
+		_draw_burger_layer(plate, i, pile[i])
+
+
+## How far in from each side a layer's row is drawn, top row first.
+##
+## A bun is not a box, and the corners that tell you so are the ones facing away
+## from the burger: a lid is domed, so its top corners round off, and a base sits
+## flat, so its bottom corners round off. They are the corners against the sky and
+## against the plate, which is where a rectangle looks like a rectangle.
+##
+## One pixel per row over two rows, which is as much curve as a half-cell layer has
+## room for: any more and the bun loses the corners a burger is read by, and the
+## outline has no pixels left to be drawn in.
+static func _layer_insets(kind: int, h: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	out.resize(h)
+	var role: String = Food.DEFS[kind]["bun_role"]
+	var rounded := mini(BUN_ROUND, h)
+	for i in rounded:
+		# A lid rounds off the top, a base the bottom, and everything else squares
+		# up. Both are one pixel per row, so the step is even rather than a curve
+		# that has to be faked.
+		match role:
+			"top":
+				out[i] = BUN_ROUND - i
+			"bottom":
+				out[h - 1 - i] = BUN_ROUND - i
+	return out
+
+
+## The rows of a layer grouped into runs that share an inset, so the flat middle of
+## a bun is one rect and only the rounded corners cost anything.
+static func _inset_runs(insets: PackedInt32Array) -> Array:
+	var out := []
+	var i := 0
+	while i < insets.size():
+		var j := i
+		while j + 1 < insets.size() and insets[j + 1] == insets[i]:
+			j += 1
+		out.append({"y": i, "h": j - i + 1, "inset": insets[i]})
+		i = j + 1
+	return out
+
+
+## One layer of a plate's burger.
+##
+## Everything drawn here follows the layer's silhouette rather than its bounding
+## box, which is why the silhouette is worked out first: the fill, the highlight
+## along the top, the texture and the outline all have to agree about where the
+## corners were cut. Stroking a rectangle would put a hard corner back on exactly
+## the pixels the rounding removed.
+func _draw_burger_layer(plate: LevelData.Span, index: int, kind: int) -> void:
+	var r := burger_layer(plate, index)
+	var insets := _layer_insets(kind, r.size.y)
+	var runs := _inset_runs(insets)
+	for run in runs:
+		var x := r.position.x + int(run["inset"])
+		var w := int(r.size.x) - int(run["inset"]) * 2
+		if w <= 0:
+			continue
+		var y := r.position.y + int(run["y"])
+		draw_rect(Rect2(x, y, w, int(run["h"])), Food.color_of(kind))
+		# The highlight is the same two-row strip as before, but clipped to the run
+		# it falls in so it stops at a rounded corner rather than overhanging it.
+		if int(run["y"]) < ACCENT_H:
+			var h := mini(int(run["h"]), ACCENT_H - int(run["y"]))
+			draw_rect(Rect2(x, y, w, h), Food.accent_of(kind))
+	_draw_burger_texture(kind, r, insets)
+	_draw_burger_outline(r, runs)
+
+
+## The texture over a layer, clipped to the layer.
+##
+## A mark is a single pixel, and the clip is the silhouette rather than the bounding
+## box: a speck sitting where a rounded corner was cut away would be a speck on the
+## background, which is the one way a texture makes a bun look mouldy.
+func _draw_burger_texture(kind: int, r: Rect2, insets: PackedInt32Array) -> void:
+	if not Food.has_texture(kind):
+		return
+	# One row in, so the top pixel of the layer is the highlight's to own.
+	var y0 := ACCENT_H
+	var color := Food.texture_of(kind)
+	var w := int(r.size.x)
+	var h := int(r.size.y)
+	for y in range(y0, h):
+		for x in w:
+			if x < insets[y] or x >= w - insets[y]:
+				continue
+			if Food.texture_at(kind, x, y):
+				draw_rect(Rect2(r.position + Vector2(x, y), Vector2.ONE), color)
+
+
+## The layer's edge, drawn as the edge it is: the sides of every run and the full
+## width of the first and last row.
+func _draw_burger_outline(r: Rect2, runs: Array) -> void:
+	var line := Cfg.COL_OUTLINE
+	for i in runs.size():
+		var run: Dictionary = runs[i]
+		var x := r.position.x + int(run["inset"])
+		var w := int(r.size.x) - int(run["inset"]) * 2
+		if w <= 0:
+			continue
+		var y := r.position.y + int(run["y"])
+		draw_rect(Rect2(x, y, 1, int(run["h"])), line)
+		draw_rect(Rect2(x + w - 1, y, 1, int(run["h"])), line)
+		# The topmost and bottommost rows are closed off end to end, which is the
+		# step the rounding is made of.
+		if i == 0:
+			draw_rect(Rect2(x, y, w, 1), line)
+		if i == runs.size() - 1:
+			draw_rect(Rect2(x, y + int(run["h"]) - 1, w, 1), line)
+
 
 
 ## Where one layer of a plate's burger is drawn, counting up from the bottom.
