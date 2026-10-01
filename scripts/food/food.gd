@@ -60,7 +60,7 @@ const DEFS := {
 ## would be a file the colours in DEFS could quietly drift out of step with.
 ##
 ## The patty is the black one and the lettuce the white, which is the way round
-## round they read at a glance: a speckled brown patty and a ribbed green leaf. The
+## they read at a glance: a speckled brown patty and a ribbed green leaf. The
 ## patty's black is a very dark brown rather than a true black, because a true black
 ## speck is the same colour as the outline a layer is stroked in and the texture
 ## disappears into the edge instead of sitting on the patty.
