@@ -290,7 +290,7 @@ func _unwind(came: Dictionary, to: Vector2i) -> Array[Vector2i]:
 ## Returns ZERO rather than a step that goes nowhere if the chef is not standing where
 ## the route thinks he is. He falls, he is put back after being caught, and a nasty can
 ## knock him about; the difference between the route's next cell and where he actually
-## is is then a vector across the map, and holding it as a direction is how a bot ends
+## is then a vector across the map, and holding it as a direction is how a bot ends
 ## up asking to walk four rows north in one step. Losing the route and looking again is
 ## always better than that.
 func _next_step(at: Vector2i) -> Vector2i:

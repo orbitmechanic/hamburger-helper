@@ -743,7 +743,7 @@ func _test_column_builds_a_burger() -> void:
 	h.teardown()
 
 ## A part is only pushed by a full crossing. Brushing its edge does nothing, which
-## is what makes the width of a part part of the puzzle.
+## is what makes the width of a part is part of the puzzle.
 func _test_crossing_needs_the_full_width() -> void:
 	_begin("crossing needs the full width")
 	var h := _Harness.new(self)

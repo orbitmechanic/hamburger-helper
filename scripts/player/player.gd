@@ -38,7 +38,7 @@ var _jump_lift := JUMP_LIFT
 var _cross: Ingredient = null
 var _covered := {}
 ## Free-running clock for the animations that are not tied to a step, so standing
-## still still breathes.
+## still breathes.
 var _anim := 0.0
 
 
