@@ -67,6 +67,12 @@ const COL_OUTLINE := Color("14141f")
 # of its pixels are `body`. tools/visual_check.gd counts the whole set rather than
 # the body alone, which is what keeps a capture check about "the board drew its
 # ledges" instead of about one colour happening to cover a given fraction.
+#
+# That set is not seven distinct colours: `ladder` is the same colour as `band`
+# in every entry here, by design rather than by accident. brand_colors()
+# deduplicates because of it, and the duplicate has to be removed rather than
+# counted twice - an inflated share is the wrong way round for a floor, since the
+# threshold would then also pass on a frame that drew none of it.
 const BRANDS := [
 	{
 		"name": "the arches",
