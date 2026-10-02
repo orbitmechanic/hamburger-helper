@@ -239,10 +239,23 @@ func _park_on_a_part() -> void:
 	var ing := _patty()
 	if ing == null:
 		return
-	game.player.place(ing.cells[ing.cells.size() / 2])
+	var spot := _stop_cell(ing)
+	game.player.place(spot)
 	await _at_frame(6)
 	print("shot_scripted: parked on an unmarked part at %s, drawn at %.0f%%" % [
-			str(ing.cells[ing.cells.size() / 2]), ing.cross_thickness() * 100.0])
+			str(spot), ing.cross_thickness() * 100.0])
+
+
+## The cell the chef finishes a part-way crossing on, which is also the cell the
+## control capture has to put him in.
+##
+## One short of the width: covering the last cell completes the crossing, and a part
+## mid-drop is a different picture again. This has to be the *same* cell the walking
+## action stops on and not merely "the middle" - on a three wide part the two happen
+## to coincide, and on a five wide one they do not, and a control shot with the chef
+## a cell away is not a control.
+func _stop_cell(ing: Ingredient) -> Vector2i:
+	return ing.cells[ing.cells.size() - 2]
 
 
 ## The first patty at least three cells wide.
@@ -251,13 +264,20 @@ func _park_on_a_part() -> void:
 ## measures pixels of a colour it can name: Food.color_of(PATTY) is something
 ## visual_check.gd can derive from the game's own palette, whereas which part the
 ## scene happened to build first is not something it could know. Every shipped level
-## has three-cell patties, and failing loudly beats quietly capturing the wrong one.
+## has three-cell patties.
+##
+## Quits rather than returning null to be captured anyway. shots.sh fails a run on a
+## script or a parse error and push_error alone is neither, so without this a level
+## with no usable patty would produce a capture of an unmarked patty - which reads as
+## the marker not working, and would be found much later as a confusing pixel diff
+## rather than as the level that caused it.
 func _patty() -> Ingredient:
 	for n in get_tree().get_nodes_in_group(&"ingredients"):
 		var ing := n as Ingredient
 		if ing != null and ing.kind == Food.Kind.PATTY and ing.cells.size() >= 3:
 			return ing
 	push_error("no patty three cells or wider on this level to run across")
+	get_tree().quit(1)
 	return null
 
 
