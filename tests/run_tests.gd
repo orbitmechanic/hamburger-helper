@@ -47,6 +47,9 @@ func _run() -> void:
 	await _test_chain_reaction()
 	await _test_column_builds_a_burger()
 	await _test_crossing_needs_the_full_width()
+	await _test_cross_progress_is_a_fifth_per_cell()
+	await _test_cross_progress_covers_each_cell_once()
+	await _test_cross_progress_is_given_back_and_restored()
 	await _test_player_jump()
 	await _test_reach_grabs_a_jar_above()
 	await _test_ladder_climb()
@@ -842,6 +845,162 @@ func _test_crossing_needs_the_full_width() -> void:
 	await h.frames(20)
 	check(ing.rest_row == 9, "the full crossing drops it one storey",
 		"row went %d -> %d" % [before, ing.rest_row])
+	h.teardown()
+
+
+## The marker's arithmetic, which is the part that does not need the chef.
+##
+## Driven through set_cross_progress rather than by walking a chef over a part,
+## because this is about the mapping from cells run over to thickness and nothing
+## about who walked where. The fifth-per-cell step and the floor at one fifth are
+## both checked past the point they stop changing, because a floor that is only
+## asserted at the value it happens to stop at is not a floor - it is a coincidence
+## that holds for one input.
+func _test_cross_progress_is_a_fifth_per_cell() -> void:
+	_begin("run-over thins a part one fifth per cell")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	if h.board == null:
+		return
+	# Five wide, which no shipped part is: it is the only width that spends the
+	# whole scale and so the only one that reaches the floor.
+	var ing := _add_ingredient(h, h.board, "m", 2, 5, 6)
+	# Above the floor each cell costs exactly a fifth.
+	for cell in 5:
+		ing.set_cross_progress(cell)
+		check(is_equal_approx(ing.cross_thickness(), 1.0 - 0.2 * float(cell)),
+			"%d cells run over draws it at %.0f%%" % [cell, (1.0 - 0.2 * float(cell)) * 100.0],
+			"thickness was %.4f" % ing.cross_thickness())
+	check(is_equal_approx(ing.cross_thickness(), 0.2), "four cells in leaves one fifth",
+		"thickness was %.4f" % ing.cross_thickness())
+	# Past four the floor holds: a part five or six cells wide completes its crossing
+	# on the fifth or sixth cell, so these inputs happen rather than being reachable
+	# in play, and a part the chef is standing in must stay visible regardless.
+	ing.set_cross_progress(5)
+	check(is_equal_approx(ing.cross_thickness(), 0.2), "a part never thins past one fifth",
+		"thickness was %.4f" % ing.cross_thickness())
+	ing.set_cross_progress(6)
+	check(is_equal_approx(ing.cross_thickness(), 0.2), "still one fifth past the width",
+		"thickness was %.4f" % ing.cross_thickness())
+	ing.set_cross_progress(-3)
+	check(is_equal_approx(ing.cross_thickness(), 1.0), "a negative count is full thickness",
+		"thickness was %.4f" % ing.cross_thickness())
+	h.teardown()
+
+
+## The chef advancing the mark one cell at a time, and only once per cell.
+##
+## Sampled every frame rather than frozen at a chosen moment, because a part three
+## wide completes on its third cell: there is no way to hold the chef still part way
+## across one and stop, so any test that waited for a mark and then asserted on it
+## would be racing his next step and would fail on how fast the container ran.
+##
+## Instead the invariant is checked directly - the mark must never run ahead of the
+## cells the chef has actually stood on - which is the "distinct cells, not arrivals"
+## rule stated as something that cannot be true by accident, and holds however fast
+## or slow the frames come.
+func _test_cross_progress_covers_each_cell_once() -> void:
+	_begin("the chef advances the mark one cell at a time")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	# Five wide: it has a cell left over after any point worth stopping at, which a
+	# three wide part does not.
+	var ing := _add_ingredient(h, board, "m", 2, 5, 6)
+	h.player.place(Vector2i(1, 6))
+	await h.frames(2)
+
+	var visited := {}
+	var steps: Array[int] = []
+	var ran_ahead := false
+	var last := 0
+	var before := ing.rest_row
+	h.hold(&"move_right")
+	for i in 600:
+		await h.frame()
+		if not ing.falling:
+			if ing.cells.has(h.player.cell):
+				visited[h.player.cell] = true
+			# The invariant: a mark counting more cells than he has stood on is a mark
+			# counting something twice.
+			if ing.cross_cells > visited.size():
+				ran_ahead = true
+			if ing.cross_cells != last:
+				steps.append(ing.cross_cells)
+				last = ing.cross_cells
+		if ing.rest_row != before:
+			break
+	h.release(&"move_right")
+
+	check(not ran_ahead, "the mark never counts more cells than he stood on",
+		"mark reached %d over %d cells" % [ing.cross_cells, visited.size()])
+	check(steps == [1, 2, 3, 4, 5], "the mark steps one cell at a time, in order",
+		"steps were %s" % str(steps))
+	check(visited.size() == 5, "he stood on all five cells",
+		"stood on %d" % visited.size())
+	check(ing.rest_row != before, "and the completed crossing dropped it",
+		"row went %d -> %d" % [before, ing.rest_row])
+	h.teardown()
+
+
+## The mark is given back when a run is abandoned and restored when a part lands.
+##
+## Both are the same failure - a part drawn squashed with nothing counting it - from
+## opposite directions, which is why they are one test: a fix that handles only the
+## abandon path leaves the part thin on the way down, and one that handles only the
+## completion path leaves it thin for good.
+func _test_cross_progress_is_given_back_and_restored() -> void:
+	_begin("a part gives its mark back, and takes it off on landing")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	# Five wide again, and this time abandoned from the near end: how many cells he
+	# covered on the way out is left to chance, and the assertion does not care as
+	# long as he came off before the fifth.
+	var ing := _add_ingredient(h, board, "m", 2, 5, 6)
+	h.player.place(Vector2i(1, 6))
+	await h.frames(2)
+	var before := ing.rest_row
+
+	h.hold(&"move_right")
+	await h.until(func() -> bool: return h.player.cell == Vector2i(4, 6))
+	h.release(&"move_right")
+	# player.cell names the step's destination as soon as the step begins, so the
+	# condition above is "walking towards 4", not "standing on it". The crossing is
+	# advanced by arrivals, so wait the step out before turning around - otherwise he
+	# is still mid-step and the mark behind him is one cell behind where it looks.
+	# Released first: holding the key through the settle walks him over the rest of a
+	# five wide part and completes the crossing this half of the test is about not
+	# completing.
+	await h.seconds(0.3)
+	h.hold(&"move_left")
+	await h.until(func() -> bool: return h.player.cell == Vector2i(1, 6))
+	h.release(&"move_left")
+	await h.seconds(0.3)
+
+	check(ing.cross_cells == 0, "walking back off the part gives the mark back",
+		"still marked %d cells" % ing.cross_cells)
+	check(ing.rest_row == before, "and the abandoned crossing did not drop it",
+		"row went %d -> %d" % [before, ing.rest_row])
+	check(is_equal_approx(ing.cross_thickness(), 1.0), "so it is drawn full thickness again",
+		"thickness was %.4f" % ing.cross_thickness())
+
+	# All the way across this time. The mark is deliberately left on for the fall, so
+	# the part is only back to full thickness once it has landed.
+	h.hold(&"move_right")
+	await h.until(func() -> bool: return ing.rest_row != before)
+	h.release(&"move_right")
+	check(ing.cross_cells > 0, "the part is still marked while it falls",
+		"marked %d" % ing.cross_cells)
+	await h.until(func() -> bool: return not ing.falling)
+	check(ing.cross_cells == 0, "landing takes the mark off",
+		"still marked %d" % ing.cross_cells)
+	check(is_equal_approx(ing.cross_thickness(), 1.0), "and it is full thickness again",
+		"thickness was %.4f" % ing.cross_thickness())
 	h.teardown()
 
 # --- Player ----------------------------------------------------------------
