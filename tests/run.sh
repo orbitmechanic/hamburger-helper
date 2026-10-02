@@ -83,6 +83,32 @@ for scene in "title:" "game:scenes/game.tscn" \
 	echo "boot $label: ok (${target:-res://scenes/main.tscn})"
 done
 
+# --- scripted action branches ------------------------------------------------
+# The capture tool has six actions and booting it bare reaches one of them, so
+# the other five are driven explicitly here.
+#
+# This is a narrower gap than the one above and worth being precise about,
+# because the comment above overstates the guarantee: booting a scene does catch
+# a parse error, but a *runtime* error inside a branch nothing enters does not.
+# shots.sh is the only thing that ran the rest, and CI does not run shots.sh -
+# it needs a display. So the action branches had no automated execution at all,
+# which is the same failure run.sh's own history describes one step further on:
+# a tool that cannot run looking exactly like a tool that was never run.
+#
+# No captures needed here. Each boot drives the real game into its state and the
+# point is that the branch executes without a script error - reject() catches
+# that, and the tool quits non-zero on an unknown action or an out-of-range
+# level, so a typo in the action list is caught too.
+for action in play pepper respawn popup_gone stunned ground; do
+	# shellcheck disable=SC2086
+	SHOT_ACTION="$action" timeout 90 "$GODOT" --headless \
+		tools/shot_scripted.tscn --quit-after 400 >"$log" 2>&1
+	status=$?
+	reject "boot tool-scripted/$action" "$status" || fail=1
+	# shellcheck disable=SC2086
+	echo "boot tool-scripted/$action: ok"
+done
+
 if [ "$fail" -ne 0 ]; then
 	echo "runner: FAILED" >&2
 	exit 1

@@ -88,6 +88,13 @@ class Span extends RefCounted:
 
 class Level:
 	var name: String = ""
+	## Which of Cfg.BRANDS this level's tiles are drawn in, by name. Authored
+	## rather than by index so a level reads as a place rather than as a number,
+	## and so adding a brand to the middle of Cfg.BRANDS does not silently
+	## restyle the levels after it. validate() rejects a name that is not in
+	## Cfg.BRANDS, so a typo fails the suite rather than quietly falling back to
+	## the first one.
+	var brand: String = ""
 	var map: PackedStringArray = []
 	## Every plate, in reading order. The burger each one is building is derived
 	## from the ingredients standing in its column, so a level never has to state
@@ -142,6 +149,7 @@ class Level:
 const LEVELS: Array = [
 	{
 		"name": "LUNCH RUSH",
+		"brand": "the arches",
 		"map": [
 			".ttt..ttt..ttt.1",
 			"####=#########=#",
@@ -162,6 +170,7 @@ const LEVELS: Array = [
 	},
 	{
 		"name": "DOUBLE SHIFT",
+		"brand": "the flame",
 		"map": [
 			"....ttt..ttt1ttt",
 			"#####=########=#",
@@ -182,6 +191,7 @@ const LEVELS: Array = [
 	},
 	{
 		"name": "DINNER RUSH",
+		"brand": "the girl",
 		"map": [
 			".ttt..ttt......3",
 			"#########=#####=",
@@ -211,14 +221,17 @@ static func get_level(index: int) -> Level:
 	if index < 0 or index >= LEVELS.size():
 		return Level.new()
 	var raw: Dictionary = LEVELS[index]
-	return from_map(String(raw["name"]), raw["map"] as PackedStringArray)
+	return from_map(String(raw["name"]), raw["map"] as PackedStringArray,
+			String(raw.get("brand", "")))
 
 
 ## Builds a level from a map. Shared by get_level and the tests, so a synthetic
 ## level in a test goes through exactly the same indexing as a shipped one.
-static func from_map(level_name: String, map: PackedStringArray) -> Level:
+static func from_map(level_name: String, map: PackedStringArray,
+		brand: String = "") -> Level:
 	var lv := Level.new()
 	lv.name = level_name
+	lv.brand = brand
 	lv.map = map.duplicate()
 	_index(lv)
 	return lv
@@ -273,6 +286,13 @@ static func validate(lv: Level) -> PackedStringArray:
 	if lv.map.is_empty():
 		problems.append("level has no rows")
 		return problems
+	# A level that names no brand is fine - it draws in the first one - but one
+	# that names a brand that does not exist is a typo, and Cfg.brand_index would
+	# swallow it and draw the level in the wrong colours. Caught here so it cannot
+	# reach a capture.
+	if lv.brand != "" and not Cfg.has_brand(lv.brand):
+		problems.append("level names brand '%s', which is not one of: %s" % [
+			lv.brand, ", ".join(Cfg.brand_names())])
 	if lv.map.size() != Cfg.GRID_H:
 		problems.append("level has %d rows, expected %d" % [lv.map.size(), Cfg.GRID_H])
 	for y in lv.map.size():
