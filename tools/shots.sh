@@ -75,6 +75,48 @@ shot() {
 	fi
 }
 
+# scripted <out> <action> <level>
+#
+# As shot(), but the state is reached by driving the game rather than by waiting
+# for it, and the tool prints the level and the state it actually got. That print
+# is the point: a capture of the wrong moment should be obvious in the log here
+# rather than discovered later as "the effect is broken".
+scripted() {
+	local out="$1" action="$2" level="$3"
+	local log="/tmp/shot-$out.log"
+	# env, not a bare assignment prefix: see the note in shot().
+	local -a envs=(
+		"DISPLAY=$DISPLAY_NUM"
+		"SHOT_SCENE=res://tools/shot_scripted.tscn"
+		"SHOT_OUT=$SHOT_DIR/$out.png"
+		"SHOT_TIME_SCALE=1"
+		"SHOT_FRAMES=30"
+		"SHOT_SETTLE_FRAMES=4"
+		"SHOT_ACTION=$action"
+		"SHOT_LEVEL=$level"
+	)
+	echo "  $out ($action, level $level) ..."
+	if ! timeout 240 env "${envs[@]}" "$GODOT" $GL_ARGS tools/screenshot.tscn >"$log" 2>&1; then
+		echo "  DIED: $out" >&2
+		tail -15 "$log" >&2
+		fail=1
+		return
+	fi
+	grep -E "^shot_scripted:|^screenshot:" "$log" | sed 's/^/    /'
+	# The tool reports the action and the level it reached. A mismatch here means
+	# the capture is not of what was asked for, which a later pixel check cannot
+	# tell apart from a working capture of the wrong thing.
+	if grep -q "SCRIPT ERROR" "$log" || grep -q "Parse Error" "$log"; then
+		echo "  SCRIPT ERROR: $out" >&2
+		grep -m3 -A2 "SCRIPT ERROR\|Parse Error" "$log" >&2
+		fail=1
+	fi
+	if [ ! -s "$SHOT_DIR/$out.png" ]; then
+		echo "  MISSING: $out.png was not written" >&2
+		fail=1
+	fi
+}
+
 echo "shots: writing to $SHOT_DIR"
 # The title screen has no phase, so there is nothing to wait for; real time, a
 # short cap, since it is already on screen by the first frame.
@@ -88,6 +130,32 @@ shot 02-level1-card scenes/game.tscn  0   400  1 30
 shot 03-level1-play scenes/game.tscn  1   900  8 10
 shot 04-level2-play scenes/game.tscn  1   900  8 10 --level=1
 shot 05-level3-play scenes/game.tscn  1   900  8 10 --level=2
+
+# The states that have to be caused rather than waited for: a spray in the air, a
+# chef under his parachute, a popup that should have taken itself off the board, a
+# frozen nasty, a finished burger. tools/shot_scripted.gd drives the real game to
+# each one and prints what it did, so these are reproducible rather than a list of
+# env vars to retype by hand - and the log line is what tells you a capture is of
+# the moment you asked for.
+#
+# No phase to wait for: the tool decides the frame itself, having driven the game
+# to the state, so the cap is just a ceiling on how long to let it settle.
+#
+# 06 is the baseline the rest are measured against: the same tool, the same
+# frames, the same level, with the action left as "play". Every other one has to
+# come out different from it, which is the only way to catch an action that
+# quietly did nothing - a capture of the level as it always looks is worse than no
+# capture, because it looks like the thing working.
+scripted 06-play         play        0
+scripted 07-pepper       pepper      0
+scripted 08-respawn      respawn     0
+scripted 09-popup-gone   popup_gone  0
+scripted 10-stunned      stunned     0
+scripted 11-ground       ground      0
+# A second level, so SHOT_LEVEL is exercised by the script rather than only by
+# hand. The brand palettes differ per level, so this also shows level 3's tiles
+# where 11 shows level 1's.
+scripted 12-ground-l3    ground      2
 
 if [ "$fail" -ne 0 ]; then
 	echo "shots: FAILED" >&2

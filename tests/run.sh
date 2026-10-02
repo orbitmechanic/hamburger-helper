@@ -72,7 +72,8 @@ fi
 # tool's own opinion of whether it had what it needed.
 for scene in "title:" "game:scenes/game.tscn" \
 		"tool-levels:tools/check_levels.tscn" \
-		"tool-visual:tools/visual_check.tscn"; do
+		"tool-visual:tools/visual_check.tscn" \
+		"tool-scripted:tools/shot_scripted.tscn"; do
 	label="${scene%%:*}"
 	target="${scene#*:}"
 	# shellcheck disable=SC2086
