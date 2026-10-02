@@ -26,6 +26,7 @@ func _run() -> void:
 
 	_test_input_map()
 	_test_levels_validate()
+	_test_levels_are_branded()
 	_test_validator_has_teeth()
 	_test_level_geometry()
 	_test_chef_never_starts_trapped()
@@ -129,6 +130,76 @@ func _test_levels_validate() -> void:
 		var problems := LevelData.validate(lv)
 		check(problems.is_empty(), "level %d (%s) is valid" % [i + 1, lv.name],
 			"; ".join(problems))
+
+## A level is drawn in one of the brand palettes, chosen by name so the map stays
+## readable in a diff. Three things have to hold for that to be worth anything: the
+## name has to be one that exists, the levels have to actually differ from each
+## other (three levels silently sharing the first palette would look correct and
+## say nothing), and the board has to end up on the palette the level asked for.
+func _test_levels_are_branded() -> void:
+	_begin("levels are branded")
+
+	# Every palette has to define every key the draw code asks for. A brand missing
+	# one hands draw_rect a null rather than a colour, which is a runtime error on
+	# one level rather than anything the other two would notice.
+	for brand in Cfg.BRANDS:
+		var missing: Array = []
+		for key in Cfg.BRAND_KEYS:
+			if not (brand as Dictionary).has(key):
+				missing.append(key)
+		check(missing.is_empty(), "brand '%s' defines every colour" % brand["name"],
+			"missing %s" % str(missing))
+		var bad: Array = []
+		for key in Cfg.BRAND_KEYS:
+			if not ((brand as Dictionary)[key] is Color):
+				bad.append(key)
+		check(bad.is_empty(), "brand '%s' colours are all colours" % brand["name"],
+			"not a Color: %s" % str(bad))
+
+	var used: Array = []
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		check(Cfg.has_brand(lv.brand), "level %d (%s) names a real brand" % [i + 1, lv.name],
+			"'%s' is not one of %s" % [lv.brand, ", ".join(Cfg.brand_names())])
+		used.append(lv.brand)
+	check(used.size() == Cfg.BRANDS.size() and not _has_duplicates(used),
+		"every level has a brand of its own", "levels use %s" % str(used))
+
+	# The board resolves the name, so a level cannot be drawn in a palette it did
+	# not ask for, and an unknown name degrades to the first brand rather than
+	# indexing off the end of the table.
+	var board := Board.new()
+	add_child(board)
+	for i in LevelData.count():
+		var lv := LevelData.get_level(i)
+		board.setup(lv)
+		check(board.brand_index() == Cfg.brand_index(lv.brand),
+			"level %d's board is drawn in '%s'" % [i + 1, lv.brand],
+			"board is on index %d" % board.brand_index())
+	board.setup(LevelData.from_map("TEST", _map(["@" + "O" + "." + "O"]), "no such brand"))
+	check(board.brand_index() == 0, "an unknown brand falls back to the first one",
+		"index is %d" % board.brand_index())
+	check(Cfg.brand_index("") == 0, "an unnamed level falls back to the first one",
+		"index is %d" % Cfg.brand_index(""))
+	board.queue_free()
+
+	# The validator has to say so, since brand_index() deliberately does not.
+	var bad_brand := LevelData.from_map("bad brand", LevelData.get_level(0).map, "no such brand")
+	var problems := LevelData.validate(bad_brand)
+	var named := false
+	for p in problems:
+		if "brand" in p:
+			named = true
+	check(named, "the validator rejects a brand that does not exist", "said: %s" % "; ".join(problems))
+
+
+func _has_duplicates(items: Array) -> bool:
+	var seen := {}
+	for i in items:
+		if seen.has(i):
+			return true
+		seen[i] = true
+	return false
 
 ## A validator that never fails is worse than none, because it is believed. This
 ## feeds it maps that are wrong in each of the ways a hand edit gets them wrong.

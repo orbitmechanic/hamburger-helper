@@ -41,10 +41,16 @@ var enemy_kinds := {}
 ## Where the chef comes back to after being caught, which is not where he started
 ## the level. See respawn_cell().
 var respawn_spawn := Vector2i(1, 1)
+## Which level's brand theme the tiles are drawn in, so a level looks like a
+## restaurant. Resolved from the level's own name in setup(), so a board cannot
+## be drawn in a palette its level did not ask for. See Cfg.BRANDS and
+## _brand_style().
+var _brand := 0
 
 
 func setup(lv: LevelData.Level) -> void:
 	level = lv
+	_brand = Cfg.brand_index(lv.brand)
 	_tiles.resize(Cfg.GRID_W * Cfg.GRID_H)
 	_tiles.fill(Tile.EMPTY)
 	_ingredients.clear()
@@ -305,31 +311,57 @@ func _draw() -> void:
 		_draw_burger(plate)
 
 
+## Which brand this board is drawn in, as an index into Cfg.BRANDS. Public because
+## it is the one piece of the board's appearance that is not visible in a
+## collision query, and the suite has to be able to ask which palette a level
+## resolved to without reading pixels.
+func brand_index() -> int:
+	return _brand
+
+
+## The tile colours for this level's brand. See Cfg.BRANDS.
+func _brand_style() -> Dictionary:
+	return Cfg.BRANDS[clampi(_brand, 0, Cfg.BRANDS.size() - 1)]
+
+
 func _draw_tile(cell: Vector2i) -> void:
 	var rect := Rect2(Vector2(cell) * T, Vector2(T, T))
+	var style := _brand_style()
 	match tile_at(cell):
 		Tile.PLATFORM:
-			draw_rect(rect, Cfg.COL_PLATFORM)
-			draw_rect(Rect2(rect.position, Vector2(rect.size.x, 3)), Cfg.COL_PLATFORM_EDGE)
-			draw_rect(Rect2(rect.position + Vector2(0, rect.size.y - 2), Vector2(rect.size.x, 2)), Cfg.COL_PLATFORM_DARK)
+			# Body, then the brand band across the middle, then the lit lip on top
+			# and the shadow underneath. The band is what carries the identity: three
+			# rectangles, one of them placed differently, is enough.
+			draw_rect(rect, style["body"])
+			draw_rect(Rect2(rect.position + Vector2(0, T / 3),
+					Vector2(rect.size.x, T / 3)), style["band"])
+			draw_rect(Rect2(rect.position, Vector2(rect.size.x, 3)), style["edge"])
+			draw_rect(Rect2(rect.position + Vector2(0, rect.size.y - 2),
+					Vector2(rect.size.x, 2)), style["dark"])
 		Tile.WALL:
-			draw_rect(rect, Cfg.COL_WALL)
-			draw_rect(Rect2(rect.position, Vector2(rect.size.x, 2)), Cfg.COL_WALL.lightened(0.25))
+			draw_rect(rect, style["wall"])
+			draw_rect(Rect2(rect.position, Vector2(rect.size.x, 2)),
+					(style["wall"] as Color).lightened(0.25))
 		Tile.LADDER:
-			draw_rect(Rect2(rect.position + Vector2(3, 0), Vector2(2, T)), Cfg.COL_LADDER)
-			draw_rect(Rect2(rect.position + Vector2(T - 5, 0), Vector2(2, T)), Cfg.COL_LADDER)
+			draw_rect(Rect2(rect.position + Vector2(3, 0), Vector2(2, T)), style["ladder"])
+			draw_rect(Rect2(rect.position + Vector2(T - 5, 0), Vector2(2, T)), style["ladder"])
 			for rung in 2:
 				var ry := 2 + rung * 6
-				draw_rect(Rect2(rect.position + Vector2(3, ry), Vector2(T - 6, 2)), Cfg.COL_LADDER.darkened(0.15))
+				draw_rect(Rect2(rect.position + Vector2(3, ry), Vector2(T - 6, 2)),
+						(style["ladder"] as Color).darkened(0.15))
 		_:
 			pass
 
 
 func _draw_burger(plate: LevelData.Span) -> void:
-	# The plate itself sits on the ground, and the burger grows upward from it.
+	# The plate itself sits on the ground, and the burger grows upward from it. It
+	# follows the brand rather than being the one white thing on the board, so a
+	# plate reads as part of the restaurant the level is drawn in.
+	var style := _brand_style()
 	var plate_rect := Rect2(Vector2(plate.x, plate.y) * T, Vector2(plate.width * T, 6))
-	draw_rect(plate_rect, Cfg.COL_PLATE)
-	draw_rect(Rect2(plate_rect.position, Vector2(plate_rect.size.x, 2)), Cfg.COL_PLATE.darkened(0.25))
+	draw_rect(plate_rect, style["plate"])
+	draw_rect(Rect2(plate_rect.position, Vector2(plate_rect.size.x, 2)),
+			(style["plate"] as Color).darkened(0.25))
 
 	# Bottom-to-top, so the first entry draws lowest and the lid ends up on top.
 	var pile := stack(plate.x)

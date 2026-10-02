@@ -80,7 +80,7 @@ func _level_card() -> void:
 		return
 	var card := Rect2(size.x * 0.5 - 68.0, size.y * 0.5 - 30.0, 136.0, 60.0)
 	draw_rect(card, Cfg.COL_CARD)
-	draw_rect(card, Cfg.COL_PLATFORM_EDGE, false, 2.0)
+	draw_rect(card, Cfg.COL_CARD_EDGE, false, 2.0)
 
 	_centered(card.position.y + 16.0, "LEVEL %d" % (GameState.level_index + 1), Cfg.COL_PEPPER, FONT_SIZE + 2)
 	_centered(card.position.y + 30.0, game.level.name, Color("f4f4ff"), FONT_SIZE)
