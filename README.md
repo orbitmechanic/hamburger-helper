@@ -31,7 +31,22 @@ fails to compile.
 | Restart | R |
 
 Walking the **full width** of a part knocks it down one storey, so a three-cell
-patty has to be crossed end to end. A part falls one storey at a time: if there is
+patty has to be crossed end to end. The board shows how far along you are: each
+cell of a part the chef runs over takes one fifth off that part's thickness, so a
+three-cell patty goes full → 80% → 60% and then drops. What is left of the
+thickness is what is left to run over. Walking off part way gives the thickness
+back, because the coverage goes with it — and a part that completes keeps its
+squashed look for the fall and fills out again once it lands, so the drop reads as
+a squeeze and release rather than the mark being taken away in the frame the part
+starts moving.
+
+The fifth is per cell rather than a share of the width, so the mark is a count of
+work done and not a proportion of the part: a wide part crossed two thirds of the
+way looks two thirds run over rather than barely touched. The trade is that the
+thin end of the scale is only reachable on a part four or five cells wide, and
+every part in the shipped levels is three.
+
+A part falls one storey at a time: if there is
 another part in the row it is falling into, that part is knocked out of the way
 first and this one takes the row it vacated, so a column cascades down a storey
 per push rather than dropping in one lump. Nothing ever comes to rest on top of
@@ -334,9 +349,13 @@ both bit during development:
   while `hud.gd` failed to parse, because the tests build `Game` directly and
   never load the scene's HUD.
 
-So `tests/run.sh` runs the suite and boots all five scenes, judging each run by
-scanning its output for script errors, parse failures and timeouts rather than
-trusting the exit status. CI runs the same script.
+So `tests/run.sh` runs the suite, boots four scenes, and then boots
+`tools/shot_scripted.tscn` once per capture action, judging each run by scanning
+its output for script errors, parse failures and timeouts rather than trusting the
+exit status. The per-action loop is there because booting the tool bare only
+reaches its default action: a parse error is caught by any boot, since the whole
+script is parsed on load, but a runtime fault in a branch nothing enters is not,
+and nothing else in CI runs the capture tool. CI runs the same script.
 
 ## Screenshots and visual checks
 
@@ -360,11 +379,17 @@ Some states cannot be waited for, only caused: a spray in the air, a chef under
 his parachute, a nasty frozen by seasoning. `tools/shot_scripted.gd` wraps a real
 `Game`, drives it into one of those states and prints what it did, and
 `tools/shots.sh` runs the lot - a spray, a respawn descent, a popup clearing, a
-board of frozen nasties, finished burgers on every plate, and one of those on
-level 3 so `SHOT_LEVEL` is exercised by the script rather than only by hand.
+board of frozen nasties, finished burgers on every plate, a patty part way run
+over, and one of those on level 3 so `SHOT_LEVEL` is exercised by the script
+rather than only by hand.
 
 It has one baseline capture, `06-play`, and every other driven capture is checked
-against it. That is the only thing standing between a broken action and a
+against it - with one exception. `13-crossing` is checked against `14-unmarked`,
+a second capture of the same chef in the same cell of the same patty with no
+crossing started. Comparing a run-over part against `06-play` would not measure
+the marker: the chef is somewhere else in `06-play`, so it covers part of the same
+pixels, and a part showing fewer of them would be consistent with the patty being
+more hidden rather than thinner. That is the only thing standing between a broken action and a
 confident screenshot: an action that quietly did nothing - a keypress that did not
 register, a call that was gated shut - produces a capture of the level looking
 exactly as it always does, at the right size, in the right place. The nasties are
@@ -377,7 +402,9 @@ differing by a dozen pixels between runs, which is more than enough to pass a
 regress without noticing: that the HUD actually draws, that the level card is
 present during the intro and gone once play starts, that each level draws a
 recognisable amount of geometry **in its own brand's colours**, that each driven
-capture differs from the baseline, and that no two captures are accidentally the
+capture differs from the baseline, that a patty the chef has run over draws
+*fewer* of its own pixels than the same patty with him standing on it unmarked,
+and that no two captures are accidentally the
 same picture. The checks are in `tools/visual_check.gd` and count pixels with
 `Image.get_pixel()`; it only reads files, so it runs headless. Thresholds are
 fractions of the image rather than pixel counts, so they hold at any capture size.

@@ -94,6 +94,20 @@ const MIN_LEVEL_SHARE := 0.12
 ## previously 0.0015 against the white *plates*, which is where its 585 px came
 ## from; branding the plates took those pixels away and left the real number.
 const MIN_HUD_TEXT_SHARE := 0.0001
+## How many fewer patty pixels a run-over patty has to show than an unmarked one.
+##
+## Measured across all three marks on the same three wide patty: 755 px at full
+## thickness, 683 after one cell, 612 after two. So a cell costs about 72 px, and
+## the floor has to sit between one cell and two or it cannot tell a marker that
+## applied from one that applied twice.
+##
+## 100 is that midpoint's rounded, sitting 39% above the 72 px a one-cell marker
+## would show and 43% below the 143 px a two-cell one does. Tight enough to catch a
+## marker that lost a step, loose enough that a pixel of blending on a different
+## renderer does not fail it - and it can be that tight only because both captures
+## put the chef in the same cell of the same part, which is what holds everything
+## else in the two images constant.
+const MIN_SQUASH_DROP_PX := 100
 ## The chef is 16 by 24 pixels in a 256x240 frame, so about 0.6% of it, and his
 ## hat and apron are most of that. The floor is set from the thinnest frame he owns
 ## rather than from whichever one a capture happened to catch: across his whole
@@ -195,6 +209,18 @@ func _run() -> void:
 	# tool ignored would land on level 1 and fail here, in level 3's own colours.
 	_check_brand("12-ground-l3 draws its level", "12-ground-l3", 2, MIN_LEVEL_SHARE)
 
+	# The run-over marker. 13-crossing is the same chef in the same cell of the same
+	# patty as 14-unmarked, with two of its three cells run over, so the only thing
+	# that can differ is the thickness.
+	#
+	# Against 14 rather than 06 on purpose: see _check_thinner. Distinctness alone
+	# would not do either - 13 differs from 06 because the chef is standing somewhere
+	# else, which it would do with the marker drawing nothing at all.
+	_check_thinner("13-crossing draws its patty thinner than the unmarked one",
+		"13-crossing", "14-unmarked", Food.color_of(Food.Kind.PATTY),
+		MIN_SQUASH_DROP_PX)
+	_check_distinct("14-unmarked", "06-play", "14-unmarked differs from 06-play")
+
 
 ## What `over` looks like once the renderer has blended it onto `under`.
 static func _over(over: Color, under: Color) -> Color:
@@ -292,6 +318,35 @@ func _check_brand(desc: String, shot: String, level_index: int, min_share: float
 	var brand_name: String = Cfg.BRANDS[Cfg.brand_index(level.brand)]["name"]
 	_check_any("%s in '%s'" % [desc, brand_name], shot, _brand_colors(level_index),
 		min_share)
+
+
+## That `squashed` shows less of a colour than `whole` does, by at least `min_drop`.
+##
+## The run-over marker is the one thing in the game that is measured by being
+## *smaller* than it should be, so every other check here is a floor and this one is
+## a difference. It is a difference between two captures of the same chef standing in
+## the same cell of the same patty, which is what makes it mean anything: compare the
+## marked capture against the level's baseline instead and the chef is somewhere
+## else in that one, occluding part of the very pixels being counted, so a smaller
+## count would be consistent with the part being *more* covered up rather than
+## thinner, and the check would pass on the bug it exists to catch.
+##
+## The drop is floored rather than merely signed, because "fewer" is also what a
+## capture where the part failed to draw at all produces - and that is the opposite
+## failure. A minimum says how much thinner it has to be to count as squashed.
+func _check_thinner(desc: String, squashed: String, whole: String, want: Color,
+		min_drop: int) -> void:
+	var a := _load(squashed)
+	var b := _load(whole)
+	if a == null or b == null:
+		return
+	var fewer := _count(a, want)
+	var more := _count(b, want)
+	if more - fewer >= min_drop:
+		_ok(desc, "%d px against %d, %d fewer" % [fewer, more, more - fewer])
+	else:
+		_fail(desc, "%d px against %d, needed at least %d fewer"
+			% [fewer, more, min_drop], "")
 
 
 func _check(desc: String, actual: int, op: String, want: int) -> void:

@@ -29,12 +29,20 @@ extends Node2D
 ##   stunned     as play, then freeze every nasty on the board
 ##   ground      as play, then complete one burger on every plate, so the drawn
 ##                stacks can be seen
+##   crossing    as play, then walk the chef all but one cell across a patty and
+##                stop, so the part's run-over marker - a fifth of its thickness
+##                off per cell - is on screen
+##   crossing_unmarked
+##                as play, then stand the chef on the same cell of the same patty
+##                with no crossing under way: the control capture that
+##                "crossing" is measured against
 ##
 ## screenshot.gd reports the scene's own state, so the action is printed too:
 ## a capture of the wrong moment should be obvious from the log rather than
 ## something to be noticed later.
 
-const ACTIONS := ["play", "pepper", "respawn", "popup_gone", "stunned", "ground"]
+const ACTIONS := ["play", "pepper", "respawn", "popup_gone", "stunned", "ground",
+		"crossing", "crossing_unmarked"]
 
 var game: Game
 
@@ -133,6 +141,18 @@ func _ready() -> void:
 		"ground":
 			await _at_frame(at)
 			_ground_every_plate()
+		"crossing":
+			await _at_frame(at)
+			await _run_part_way_across_a_part()
+		"crossing_unmarked":
+			# The control for "crossing": the chef in exactly the same cell, on the same
+			# part, with no crossing under way. Comparing the two isolates the squash,
+			# because the chef occludes the part in both and only the mark differs. A
+			# comparison against 06-play would not: the chef is somewhere else in that
+			# one, so it covers part of the same pixels and the two effects cannot be
+			# told apart.
+			await _at_frame(at)
+			_park_on_a_part()
 	await get_tree().process_frame
 	_report()
 
@@ -172,6 +192,93 @@ func _report() -> void:
 		str(pl.position), str(pl.cell), pl.spray_time, pl.visible])
 	print("shot_scripted: anim=%d frame=%d pose_anim=%d _anim=%d processing=%s" % [
 		an, pl.anim_frame(an), pl.pose_anim, pl._anim, pl.is_processing()])
+
+
+## Walks the chef over all but the last cell of a part and stops there, so the
+## capture shows a part part way run over rather than one either untouched or
+## already dropping.
+##
+## Driven through held input and stopped by letting go, because place() throws the
+## crossing away by design - repositioning the chef is not the same as walking him,
+## and a capture set up with place() would show a part at full thickness and look
+## exactly like the marker not working.
+##
+## One cell short of the end, so the capture is of a crossing still in progress: the
+## last cell completes it, and a part mid-drop is a different picture again.
+func _run_part_way_across_a_part() -> void:
+	var ing := _patty()
+	if ing == null:
+		return
+	var stop_at := ing.cells.size() - 1
+	# Off the near end, so the first step lands on the part and counts.
+	game.player.place(ing.cells[0] + Vector2i.LEFT)
+	await _at_frame(1)
+	Input.action_press(&"move_right")
+	var waited := 0.0
+	while ing.cross_cells < stop_at and waited < 3.0:
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+	Input.action_release(&"move_right")
+	# Let the step that took him onto the last cell finish arriving, or the mark is a
+	# cell behind where the picture says he is.
+	await _at_frame(6)
+	# Reported either way, because the walk is real game time and the capture is a
+	# frame budget: if the budget ran out first the capture is a part at rest and
+	# looks exactly like the marker not working, so the log has to say the mark did
+	# not arrive rather than leave it to be noticed.
+	print("shot_scripted: run over %d of %d cells, drawn at %.0f%%%s" % [
+			ing.cross_cells, ing.cells.size(), ing.cross_thickness() * 100.0,
+			"" if ing.cross_cells >= stop_at else " (WALK DID NOT FINISH)"])
+
+
+## Stands the chef on the middle of a part with no crossing started, for the control
+## capture. place() rather than a walk, because place() throws the crossing away by
+## design - repositioning the chef is not the same as walking him over, and a part
+## he is merely standing on is exactly the unmarked state the control needs.
+func _park_on_a_part() -> void:
+	var ing := _patty()
+	if ing == null:
+		return
+	var spot := _stop_cell(ing)
+	game.player.place(spot)
+	await _at_frame(6)
+	print("shot_scripted: parked on an unmarked part at %s, drawn at %.0f%%" % [
+			str(spot), ing.cross_thickness() * 100.0])
+
+
+## The cell the chef finishes a part-way crossing on, which is also the cell the
+## control capture has to put him in.
+##
+## One short of the width: covering the last cell completes the crossing, and a part
+## mid-drop is a different picture again. This has to be the *same* cell the walking
+## action stops on and not merely "the middle" - on a three wide part the two happen
+## to coincide, and on a five wide one they do not, and a control shot with the chef
+## a cell away is not a control.
+func _stop_cell(ing: Ingredient) -> Vector2i:
+	return ing.cells[ing.cells.size() - 2]
+
+
+## The first patty at least three cells wide.
+##
+## A patty specifically, and not just any wide part, because the capture check
+## measures pixels of a colour it can name: Food.color_of(PATTY) is something
+## visual_check.gd can derive from the game's own palette, whereas which part the
+## scene happened to build first is not something it could know. Every shipped level
+## has three-cell patties.
+##
+## Quits rather than returning null to be captured anyway. shots.sh fails a run on a
+## script or a parse error and push_error alone is neither, so without this a level
+## with no usable patty would produce a capture of an unmarked patty - which reads as
+## the marker not working, and would be found much later as a confusing pixel diff
+## rather than as the level that caused it.
+func _patty() -> Ingredient:
+	for n in get_tree().get_nodes_in_group(&"ingredients"):
+		var ing := n as Ingredient
+		if ing != null and ing.kind == Food.Kind.PATTY and ing.cells.size() >= 3:
+			return ing
+	push_error("no patty three cells or wider on this level to run across")
+	get_tree().quit(1)
+	return null
 
 
 func _ground_every_plate() -> void:

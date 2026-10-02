@@ -77,6 +77,12 @@ func setup(p_board: Board, start: Vector2i) -> void:
 ## knock it down without the chef having walked anywhere.
 func place(at: Vector2i) -> void:
 	super.place(at)
+	# A part he was part way across when he was moved has to give its mark back.
+	# Not through _close_crossing() even though that would tidy this up: a crossing
+	# must not *complete* because the chef was repositioned, and place() is called by
+	# tests and by anything that puts him somewhere rather than by play.
+	if _cross != null:
+		_cross.set_cross_progress(0)
 	_cross = null
 	_covered.clear()
 	moving = false
@@ -354,22 +360,40 @@ func _arrived() -> void:
 ## part once he has been all the way across it. Crossing is measured in cells
 ## covered rather than distance travelled, so pacing back and forth over a wide
 ## part still works, and a part is never pushed by a brush against its edge.
+##
+## The part is told how much of it has been run over here rather than through a
+## signal, because a crossing's mark is a fact about the part rather than a
+## decision anybody makes: what a completed crossing *does* is policy, and that is
+## what crossed is for. Going through a signal would mean the harness in the suite,
+## which stands in for the Game by connecting crossed itself, had to stand in for
+## this too - and a marker that only appears when the Game is present is a marker
+## the rule tests cannot see.
 func _track_crossing() -> void:
 	var here := board.ingredient_at(cell)
 	if here != _cross:
 		_close_crossing()
 		_cross = here
-	if _cross != null:
+	if _cross != null and not _covered.has(cell):
+		# Pushed as the count of distinct cells rather than incremented, so the part
+		# always shows exactly what _covered holds and the two cannot disagree.
 		_covered[cell] = true
+		_cross.set_cross_progress(_covered.size())
 
 
 func _close_crossing() -> void:
 	if _cross != null and _covered.size() >= _cross.cells.size():
+		# Completed, and the mark is deliberately left on. The part is about to fall
+		# and it restores itself when it lands, so it carries the squash down with it.
 		var target := _cross
 		_cross = null
 		_covered.clear()
 		crossed.emit(target)
 		return
+	if _cross != null:
+		# Abandoned - he stepped off the part before covering all of it - so the
+		# coverage is being thrown away and the mark has to go with it. Left on, the
+		# part would sit there squashed with nothing counting it and no way back.
+		_cross.set_cross_progress(0)
 	_cross = null
 	_covered.clear()
 

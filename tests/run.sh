@@ -99,7 +99,8 @@ done
 # point is that the branch executes without a script error - reject() catches
 # that, and the tool quits non-zero on an unknown action or an out-of-range
 # level, so a typo in the action list is caught too.
-for action in play pepper respawn popup_gone stunned ground; do
+for action in play pepper respawn popup_gone stunned ground crossing \
+		crossing_unmarked; do
 	# shellcheck disable=SC2086
 	SHOT_ACTION="$action" timeout 90 "$GODOT" --headless \
 		tools/shot_scripted.tscn --quit-after 400 >"$log" 2>&1

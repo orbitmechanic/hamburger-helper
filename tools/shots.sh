@@ -82,7 +82,7 @@ shot() {
 # is the point: a capture of the wrong moment should be obvious in the log here
 # rather than discovered later as "the effect is broken".
 scripted() {
-	local out="$1" action="$2" level="$3"
+	local out="$1" action="$2" level="$3" frames="${4:-30}"
 	local log="/tmp/shot-$out.log"
 	# env, not a bare assignment prefix: see the note in shot().
 	local -a envs=(
@@ -90,7 +90,7 @@ scripted() {
 		"SHOT_SCENE=res://tools/shot_scripted.tscn"
 		"SHOT_OUT=$SHOT_DIR/$out.png"
 		"SHOT_TIME_SCALE=1"
-		"SHOT_FRAMES=30"
+		"SHOT_FRAMES=$frames"
 		"SHOT_SETTLE_FRAMES=4"
 		"SHOT_ACTION=$action"
 		"SHOT_LEVEL=$level"
@@ -152,6 +152,18 @@ scripted 08-respawn      respawn     0
 scripted 09-popup-gone   popup_gone  0
 scripted 10-stunned      stunned     0
 scripted 11-ground       ground      0
+# A seventh, showing a part part way run over rather than one at rest. It is the
+# capture that says whether the run-over marker is being drawn at all, and
+# visual_check.gd measures it against 06 rather than only asserting it differs.
+# 150 frames rather than the usual 30: this one has to walk the chef two cells
+# first, which is real game time, and a capture taken mid-walk is a part at rest
+# that looks exactly like the marker not working.
+scripted 13-crossing     crossing    0  150
+# The control: same chef, same cell, same patty, no crossing started. The check
+# measures 13 against this rather than against 06-play, because in 06 the chef is
+# elsewhere and occludes part of the same pixels - so a difference would not say
+# whether the part was thinner or just more covered up.
+scripted 14-unmarked     crossing_unmarked  0
 # A second level, so SHOT_LEVEL is exercised by the script rather than only by
 # hand. The brand palettes differ per level, so this also shows level 3's tiles
 # where 11 shows level 1's.

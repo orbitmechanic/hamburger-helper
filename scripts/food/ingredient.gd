@@ -14,6 +14,24 @@ signal boarded(plate: LevelData.Span)
 ## Emitted when a part was knocked while an enemy was standing on it.
 signal carried_rider
 
+## One cell of the chef running over a part removes this much of the part's
+## thickness, so a crossing is five steps deep whatever the part's width.
+##
+## A fixed fifth per cell rather than a share of the width. The marker's job is to
+## say how much of *one crossing* is left, and a proportional share makes a wide
+## part look barely touched after the chef has crossed most of it: three cells of a
+## three-wide part would read as 33% rather than as three fifths of the work done.
+##
+## The consequence is that the thin end is only reachable on a part four or five
+## cells wide, and every part in the shipped levels is three. Tests use a
+## synthetic five-wide part so the floor is exercised rather than assumed.
+const CROSS_STEP := 5.0
+## Never thinner than one step's worth. A run always completes by or before this
+## many cells on a part this wide, so the floor is only reached by a part wider
+## than any there is - but a part the chef is standing in has to stay visible, and
+## zero would be indistinguishable from a cell with nothing in it.
+const MIN_THICKNESS := 1.0 / CROSS_STEP
+
 var board: Board
 var kind: Food.Kind = Food.Kind.PATTY
 ## The run of cells this part occupies. Wider parts are drawn wide, and the chef
@@ -34,6 +52,13 @@ var falling := false
 ## up, or it only ever sees the start and the end. See swept_cells().
 var fall_from_row := -1
 var fall_to_row := -1
+## How many of this part's cells the chef has run over since he got onto it, which
+## is also how much of its thickness is still on it. See set_cross_progress().
+##
+## Set by the chef as he arrives on a cell rather than accumulated anywhere, so it
+## is a function of the crossing's own bookkeeping and cannot drift from it. Zero
+## means nothing is counting this part, and the part is drawn at full thickness.
+var cross_cells := 0
 
 var _tween: Tween
 
@@ -70,6 +95,31 @@ func knock(extra_floors: int = 0) -> Dictionary:
 			break
 		where = _drop()
 	return where
+
+
+## Records how much of this part the chef has run over. `covered` is the number of
+## distinct cells of it he has been on since he got there, not a distance and not a
+## count of arrivals, so pacing back and forth over the same cell does not advance
+## it.
+##
+## Pushed rather than polled, and it no-ops when nothing changed, because it is
+## called on every arrival the chef makes anywhere - stepping off one part and
+## resetting it is a call that almost always arrives with the value it already
+## holds.
+func set_cross_progress(covered: int) -> void:
+	var n := maxi(covered, 0)
+	if n == cross_cells:
+		return
+	cross_cells = n
+	queue_redraw()
+
+
+## How thick this part is drawn right now, as a fraction of a full-thickness one.
+## Public because it is the one thing about the marker that is not visible in a
+## crossing query, and both the suite and the capture check need to ask how thick
+## a part is without reading pixels off it.
+func cross_thickness() -> float:
+	return maxf((CROSS_STEP - float(cross_cells)) / CROSS_STEP, MIN_THICKNESS)
 
 
 ## Moves down one level, chaining into whatever is underneath.
@@ -161,6 +211,17 @@ func _on_fallen() -> void:
 	falling = false
 	fall_from_row = -1
 	fall_to_row = -1
+	# Back to full thickness once the part has landed, and not when the crossing
+	# completed: a part that was squashed the whole way down and is thin again the
+	# moment it lands reads as the crossing being undone, and resetting at the top
+	# of the fall instead would pop it back to full in the same frame the drop
+	# starts, throwing away the beat the marker just earned. A part knocked by a
+	# cascade or a rider while it was partly run over lands the same way.
+	#
+	# Resetting here rather than in _relocate() is also what makes this the only
+	# place to get right: a part is not marked run-over by anything but a crossing,
+	# so the end of that crossing's effect on it is the end of a fall.
+	cross_cells = 0
 	queue_redraw()
 
 
@@ -197,11 +258,24 @@ func _pixels_for_row(row: int) -> Vector2:
 
 func _draw() -> void:
 	var w := float(cells.size() * Cfg.TILE)
-	var r := Rect2(-w * 0.5 + 1.0, -Cfg.TILE * 0.5 + 1.0, w - 2.0, Cfg.TILE - 2.0)
+	# A part the chef has run over is drawn compressed, with its top edge exactly
+	# where it always was. He walks *in* a part's cell rather than on top of one, so
+	# his boots are at the top of this rect and the top edge is what has to hold
+	# still. Letting it drop would open a visible gap between his boots and the
+	# patty. The underside is the edge that is free to rise, and a part that thins
+	# from underneath reads as pressed down rather than as eaten away.
+	var full := Cfg.TILE - 2.0
+	var k := cross_thickness()
+	var r := Rect2(-w * 0.5 + 1.0, -Cfg.TILE * 0.5 + 1.0, w - 2.0, full * k)
 	draw_rect(r, Cfg.COL_OUTLINE)
 	draw_rect(r.grow(-1.0), Food.color_of(kind))
 	# A highlight along the top and a darker seam below, so a wide part still
-	# reads as one slice rather than a row of tiles.
-	draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2.0, 4)), Food.accent_of(kind))
-	draw_rect(Rect2(r.position + Vector2(2, r.size.y - 5.0), Vector2(r.size.x - 4.0, 2)),
+	# reads as one slice rather than a row of tiles. Both scale with the part, which
+	# is what keeps them in order on a part at its floor: at a fifth of its height
+	# the seam lands just above the bottom edge rather than hanging below it, which
+	# is what scaling the offsets and the heights independently would do.
+	draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2.0, 4.0 * k)),
+		Food.accent_of(kind))
+	draw_rect(Rect2(r.position + Vector2(2, r.size.y - 5.0 * k),
+			Vector2(r.size.x - 4.0, 2.0 * k)),
 		Food.accent_of(kind).darkened(0.25))
