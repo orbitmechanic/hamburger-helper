@@ -29,12 +29,12 @@ extends Node2D
 ##   stunned     as play, then freeze every nasty on the board
 ##   ground      as play, then complete one burger on every plate, so the drawn
 ##                stacks can be seen
-##   crossing    as play, then walk the chef all but one cell across a patty and
-##                stop, so the part's run-over marker - a fifth of its thickness
-##                off per cell - is on screen
+##   crossing    as play, then walk the chef onto the near cell of a patty and back
+##                off it again, so one cell is left pressed down with the chef
+##                standing clear of it - the shape the stomp mechanic has
 ##   crossing_unmarked
-##                as play, then stand the chef on the same cell of the same patty
-##                with no crossing under way: the control capture that
+##                as play, then stand the chef in the same cell beside the same
+##                patty with nothing pressed down: the control capture that
 ##                "crossing" is measured against
 ##
 ## screenshot.gd reports the scene's own state, so the action is printed too:
@@ -45,6 +45,16 @@ const ACTIONS := ["play", "pepper", "respawn", "popup_gone", "stunned", "ground"
 		"crossing", "crossing_unmarked"]
 
 var game: Game
+
+## Set once the action above has run to completion.
+##
+## Read by tools/screenshot.gd, which otherwise captures whenever its frame cap
+## arrives - so an action that needs more real game time than the cap allows is
+## photographed part way through, with nothing in the log to say so. That is how
+## the control capture came to show the chef still standing on the patty the
+## comparison needs him clear of, which made a pixel check measure where he was
+## rather than how the patty was drawn.
+var shot_done := false
 
 
 func _ready() -> void:
@@ -154,6 +164,7 @@ func _ready() -> void:
 			await _at_frame(at)
 			_park_on_a_part()
 	await get_tree().process_frame
+	shot_done = true
 	_report()
 
 
@@ -194,68 +205,107 @@ func _report() -> void:
 		an, pl.anim_frame(an), pl.pose_anim, pl._anim, pl.is_processing()])
 
 
-## Walks the chef over all but the last cell of a part and stops there, so the
-## capture shows a part part way run over rather than one either untouched or
-## already dropping.
+## Walks the chef onto the near end of a part, then back off it, so the capture
+## shows one cell pressed down with its neighbours at full height - the shape the
+## whole mechanic is about. A capture of a part part way *thinned* is a different
+## picture again, and there is no such state any more.
 ##
-## Driven through held input and stopped by letting go, because place() throws the
-## crossing away by design - repositioning the chef is not the same as walking him,
-## and a capture set up with place() would show a part at full thickness and look
-## exactly like the marker not working.
+## Driven through held input and stopped by letting go, because place() does not
+## stomp by design - repositioning the chef is not the same as walking him, and a
+## capture set up with place() would show a part untouched and look exactly like the
+## stomps not working.
 ##
-## One cell short of the end, so the capture is of a crossing still in progress: the
-## last cell completes it, and a part mid-drop is a different picture again.
+## Only the first cell is stomped rather than as many as will fit, because the part
+## drops when the last cell goes and a capture of a part dropping is a different
+## picture again. Stopping at the near end also leaves two cells of run-out, so a
+## chef still carrying a step of momentum cannot tip the capture into the drop.
+##
+## Then he is walked back off the part. The stomps stay put until the part lands, so
+## he can step off and leave the pressed cell showing - which is also the only way
+## to capture the offset, because a chef standing in the cell covers the very row
+## that moved.
 func _run_part_way_across_a_part() -> void:
 	var ing := _patty()
 	if ing == null:
 		return
-	var stop_at := ing.cells.size() - 1
+	var near := ing.cells[0]
 	# Off the near end, so the first step lands on the part and counts.
-	game.player.place(ing.cells[0] + Vector2i.LEFT)
+	game.player.place(near + Vector2i.LEFT)
 	await _at_frame(1)
+	var reached := await _walk_until(func() -> bool: return ing.is_stomped(near))
+	await _stand_clear_of(ing)
+	# Reported either way, because the walk is real game time and the capture is a
+	# frame budget: if the budget ran out first the capture is a part at rest and
+	# looks exactly like the stomps not working, so the log has to say they did not
+	# arrive rather than leave it to be noticed.
+	print("shot_scripted: %d of %d cells stomped (%s), each down %.1fpx, part %s%s" % [
+			ing.stomped_count(), ing.cells.size(), str(near), ing.stomp_drop(),
+			"at rest" if not ing.falling else "FALLING",
+			"" if reached else " (WALK DID NOT FINISH)"])
+
+
+## Walks the chef back off the part and leaves him standing still in the cell
+## before it.
+##
+## Both stomp captures end here, and the reason they share it is that the two
+## pictures are compared pixel by pixel: the chef has to be in the same cell,
+## standing still on the same animation frame, in both or he covers a different
+## amount of the part and the comparison measures him rather than the stomp. He
+## also has to be *off* the part, because a chef in the stomped cell covers the
+## only rows that moved.
+func _stand_clear_of(ing: Ingredient) -> void:
+	var clear_of := ing.cells[0] + Vector2i.LEFT
+	Input.action_press(&"move_left")
+	var off := 0.0
+	while (game.player.cell != clear_of or game.player.moving) and off < 3.0:
+		await get_tree().process_frame
+		off += get_process_delta_time()
+	Input.action_release(&"move_left")
+	# A fixed settle, not a frame budget: the pose is a function of how long the
+	# chef has been still, and both captures have to land on the same one.
+	await _at_frame(8)
+
+
+## Holds right until a condition holds or the budget runs out, so a scripted walk
+## cannot hang the capture on a condition the game never reaches.
+##
+## Presses and releases around the wait itself rather than leaving the caller to do
+## it, so there is one place that owns the key and a run cannot end with it stuck
+## down and the next action walking off under a held arrow.
+func _walk_until(done: Callable) -> bool:
 	Input.action_press(&"move_right")
 	var waited := 0.0
-	while ing.cross_cells < stop_at and waited < 3.0:
+	while not done.call() and waited < 3.0:
 		await get_tree().process_frame
 		waited += get_process_delta_time()
 	Input.action_release(&"move_right")
-	# Let the step that took him onto the last cell finish arriving, or the mark is a
-	# cell behind where the picture says he is.
+	# Let the step that got him there finish arriving, or the stomp is a cell behind
+	# where the picture says he is.
 	await _at_frame(6)
-	# Reported either way, because the walk is real game time and the capture is a
-	# frame budget: if the budget ran out first the capture is a part at rest and
-	# looks exactly like the marker not working, so the log has to say the mark did
-	# not arrive rather than leave it to be noticed.
-	print("shot_scripted: run over %d of %d cells, drawn at %.0f%%%s" % [
-			ing.cross_cells, ing.cells.size(), ing.cross_thickness() * 100.0,
-			"" if ing.cross_cells >= stop_at else " (WALK DID NOT FINISH)"])
+	return done.call()
 
 
-## Stands the chef on the middle of a part with no crossing started, for the control
-## capture. place() rather than a walk, because place() throws the crossing away by
-## design - repositioning the chef is not the same as walking him over, and a part
-## he is merely standing on is exactly the unmarked state the control needs.
+## Puts the chef beside the same part with nothing stomped, for the control capture.
+##
+## Walks him off the near end exactly as the stomping capture does, because the two
+## captures are only comparable if the chef is in the same place in both: he is
+## standing clear of the part in 13, and a control with him still on it would be
+## measuring where the chef is rather than how the patty is drawn.
+##
+## place() rather than a walk to get him onto the part in the first place, because
+## place() does not stomp by design - repositioning the chef is not the same as
+## walking him over, and a part he is merely standing on is exactly the unstomped
+## state the control needs.
 func _park_on_a_part() -> void:
 	var ing := _patty()
 	if ing == null:
 		return
-	var spot := _stop_cell(ing)
+	var spot := ing.cells[0]
 	game.player.place(spot)
 	await _at_frame(6)
-	print("shot_scripted: parked on an unmarked part at %s, drawn at %.0f%%" % [
-			str(spot), ing.cross_thickness() * 100.0])
-
-
-## The cell the chef finishes a part-way crossing on, which is also the cell the
-## control capture has to put him in.
-##
-## One short of the width: covering the last cell completes the crossing, and a part
-## mid-drop is a different picture again. This has to be the *same* cell the walking
-## action stops on and not merely "the middle" - on a three wide part the two happen
-## to coincide, and on a five wide one they do not, and a control shot with the chef
-## a cell away is not a control.
-func _stop_cell(ing: Ingredient) -> Vector2i:
-	return ing.cells[ing.cells.size() - 2]
+	await _stand_clear_of(ing)
+	print("shot_scripted: parked on an unstomped part at %s, %d of %d cells down" % [
+			str(spot), ing.stomped_count(), ing.cells.size()])
 
 
 ## The first patty at least three cells wide.

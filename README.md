@@ -31,20 +31,26 @@ fails to compile.
 | Restart | R |
 
 Walking the **full width** of a part knocks it down one storey, so a three-cell
-patty has to be crossed end to end. The board shows how far along you are: each
-cell of a part the chef runs over takes one fifth off that part's thickness, so a
-three-cell patty goes full → 80% → 60% and then drops. What is left of the
-thickness is what is left to run over. Walking off part way gives the thickness
-back, because the coverage goes with it — and a part that completes keeps its
-squashed look for the fall and fills out again once it lands, so the drop reads as
-a squeeze and release rather than the mark being taken away in the frame the part
-starts moving.
+patty has to be crossed end to end. The board shows how far along you are: every
+cell of a part the chef steps on is **pressed down** by one fifth of the cell, and
+stays pressed until the part lands. Nothing else about the part changes — it is
+still full thickness, still all there, and only the cells you have stood on have
+moved. That reads as a part taking a set of footsteps rather than wearing them
+away: a three-cell patty crossed end to end goes down one cell at a time and drops
+when the third goes.
 
-The fifth is per cell rather than a share of the width, so the mark is a count of
-work done and not a proportion of the part: a wide part crossed two thirds of the
-way looks two thirds run over rather than barely touched. The trade is that the
-thin end of the scale is only reachable on a part four or five cells wide, and
-every part in the shipped levels is three.
+The cells are independent, which is the point. Landing on the *middle* of a patty
+from a hop or a ladder presses only that cell and leaves its neighbours exactly
+where they were, so the part reads as one continuous slice with a dent in it — and
+a wide part crossed a third of the way is a third of the way down, not a third of
+its thickness left. A part that completes keeps its pressed cells for the fall and
+fills out again once it lands, so the drop reads as a squeeze and release rather
+than the stomps being taken away in the frame the part starts moving.
+
+Walking off does **not** undo them. That is deliberate: a stomp is a stomp, so a
+part can be worked in stages and abandoned and come back to, and the only thing
+that un-presses a cell is the part landing on something. The trade is that a part
+cannot be pushed back up, so a mistake is a mistake.
 
 A part falls one storey at a time: if there is
 another part in the row it is falling into, that part is knocked out of the way
@@ -155,13 +161,23 @@ correct and say nothing.
 
 Ledges sit on rows 1, 4, 7 and 14, and the chef walks on rows 0, 3, 6 and 13.
 The three upper storeys hold the ingredients; the ground storey is deliberately
-tall, with rows 8 to 12 left open above the plates on row 13. That is the part
-that is easy to get wrong: a burger grows *upward* from its plate, one row per
-layer, and a part cannot fall through a platform, so a ledge anywhere in a
-plate's column caps that burger. An earlier version put a ledge on row 10, which
-capped every burger at two layers and left all three levels impossible to finish.
-`LevelData.validate()` now rejects a plate with no room, so that cannot ship
-again.
+tall, with rows 8 to 13 left open above the plates, which are set into the ground
+on row 14. That is the part that is easy to get wrong: a burger grows *upward*
+from its plate, one row per layer, and a part cannot fall through a platform, so a
+ledge anywhere in a plate's column caps that burger. An earlier version put a ledge
+on row 10, which capped every burger at two layers and left all three levels
+impossible to finish. `LevelData.validate()` now rejects a plate with no room, so
+that cannot ship again.
+
+Putting the plates in the ground, one row below the floor he walks on, is what
+lets a lower bun start on the floor: a part resting on row 13 is already directly
+above the plate underneath it, so stomping it the last step sends it *onto* the
+plate rather than past it. Nothing that walks can be in row 14 — there is no
+ladder onto it and the row above holds the floor up — so the plates stay out of the
+chef's way while still catching food, and `validate()` rejects a level whose
+plates are reachable. One patty in each level starts on that ground floor, always
+the one belonging to the plate furthest from the chef, so the walk down to it is
+the longest the ground lane offers.
 
 An ingredient's cells have to line up exactly with the plate below it, because a
 part keeps its own column all the way down while the finished burger is drawn over
@@ -379,20 +395,30 @@ Some states cannot be waited for, only caused: a spray in the air, a chef under
 his parachute, a nasty frozen by seasoning. `tools/shot_scripted.gd` wraps a real
 `Game`, drives it into one of those states and prints what it did, and
 `tools/shots.sh` runs the lot - a spray, a respawn descent, a popup clearing, a
-board of frozen nasties, finished burgers on every plate, a patty part way run
-over, and one of those on level 3 so `SHOT_LEVEL` is exercised by the script
-rather than only by hand.
+board of frozen nasties, finished burgers on every plate, a patty with one cell
+pressed down, and one of those on level 3 so `SHOT_LEVEL` is exercised by the
+script rather than only by hand.
 
 It has one baseline capture, `06-play`, and every other driven capture is checked
 against it - with one exception. `13-crossing` is checked against `14-unmarked`,
-a second capture of the same chef in the same cell of the same patty with no
-crossing started. Comparing a run-over part against `06-play` would not measure
-the marker: the chef is somewhere else in `06-play`, so it covers part of the same
+a second capture of the same chef standing clear of the same patty with nothing
+pressed down. Comparing a stomped part against `06-play` would not measure the
+stomps: the chef is somewhere else in `06-play`, so it covers part of the same
 pixels, and a part showing fewer of them would be consistent with the patty being
-more hidden rather than thinner. That is the only thing standing between a broken action and a
-confident screenshot: an action that quietly did nothing - a keypress that did not
-register, a call that was gated shut - produces a capture of the level looking
-exactly as it always does, at the right size, in the right place. The nasties are
+more hidden rather than moved.
+
+Two checks run on that pair, and they are different in kind. One asserts the patty
+is still the *same size* in both, because a stomp moves a cell and keeps its ink —
+counting pixels cannot see a cell move, so this is what catches a stomp quietly
+implemented as the thinning it replaced. The other asserts the middle third of the
+patty hangs at least two pixels lower than its outer thirds, which is the shape
+the mechanic has and the only thing in the frame that says a cell moved. It can
+only be read because the chef is standing *clear* of the part: a chef in the
+stomped cell covers the very rows that moved. That is the only thing standing
+between a broken action and a confident screenshot: an action that quietly did
+nothing - a keypress that did not register, a call that was gated shut - produces
+a capture of the level looking exactly as it always does, at the right size, in
+the right place. The nasties are
 parked *and* have their facing pinned, because `Enemy.setup` seeds facing from
 `randf()` and the sprite is mirrored by it; without that the same action came back
 differing by a dozen pixels between runs, which is more than enough to pass a
@@ -402,12 +428,15 @@ differing by a dozen pixels between runs, which is more than enough to pass a
 regress without noticing: that the HUD actually draws, that the level card is
 present during the intro and gone once play starts, that each level draws a
 recognisable amount of geometry **in its own brand's colours**, that each driven
-capture differs from the baseline, that a patty the chef has run over draws
-*fewer* of its own pixels than the same patty with him standing on it unmarked,
-and that no two captures are accidentally the
+capture differs from the baseline, that a stomped patty still draws exactly as
+many of its own pixels as an unstomped one — a stomp moves a cell, so a count that
+came out lower would mean the cell thinned — that the middle third of that patty
+hangs lower than its outer thirds, and that no two captures are accidentally the
 same picture. The checks are in `tools/visual_check.gd` and count pixels with
-`Image.get_pixel()`; it only reads files, so it runs headless. Thresholds are
-fractions of the image rather than pixel counts, so they hold at any capture size.
+`Image.get_pixel()`; it only reads files, so it runs headless. Most thresholds are
+fractions of the image rather than pixel counts, so they hold at any capture size;
+the two stomp checks are in pixels, because they are about a three-pixel offset and
+the thing they assert is a position.
 
 The level check reads the expected colours back out of the level's own brand, so
 a level rendered in the wrong palette fails it - which is the only place the

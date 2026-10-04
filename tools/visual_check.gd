@@ -94,20 +94,21 @@ const MIN_LEVEL_SHARE := 0.12
 ## previously 0.0015 against the white *plates*, which is where its 585 px came
 ## from; branding the plates took those pixels away and left the real number.
 const MIN_HUD_TEXT_SHARE := 0.0001
-## How many fewer patty pixels a run-over patty has to show than an unmarked one.
+## How many pixels of patty a capture may be missing against the same patty drawn
+## at rest.
 ##
-## Measured across all three marks on the same three wide patty: 755 px at full
-## thickness, 683 after one cell, 612 after two. So a cell costs about 72 px, and
-## the floor has to sit between one cell and two or it cannot tell a marker that
-## applied from one that applied twice.
+## This used to be a floor on how much *fewer* patty pixels a run-over patty showed,
+## because a run-over part was thinner and lost ink. Nothing thins any more: a stomped
+## cell is pushed down and keeps every pixel it had, so the count is a two-sided
+## check - a stomp that silently thinned the cell would show up here as fewer, and
+## one that duplicated or smeared the cell as more.
 ##
-## 100 is that midpoint's rounded, sitting 39% above the 72 px a one-cell marker
-## would show and 43% below the 143 px a two-cell one does. Tight enough to catch a
-## marker that lost a step, loose enough that a pixel of blending on a different
-## renderer does not fail it - and it can be that tight only because both captures
-## put the chef in the same cell of the same part, which is what holds everything
-## else in the two images constant.
-const MIN_SQUASH_DROP_PX := 100
+## The drop is a fifth of a cell, so the honest slack is a couple of pixels: the
+## edge between the cell and its neighbour is drawn from shifted coordinates and can
+## round either way, and the chef walking off the part leaves a frame or two of
+## stepping animation that differs between the two captures. Two pixels out of a
+## three-cell patty is well under half a cell of outline.
+const MAX_PATTY_PIXEL_DRIFT := 30
 ## The chef is 16 by 24 pixels in a 256x240 frame, so about 0.6% of it, and his
 ## hat and apron are most of that. The floor is set from the thinnest frame he owns
 ## rather than from whichever one a capture happened to catch: across his whole
@@ -209,16 +210,18 @@ func _run() -> void:
 	# tool ignored would land on level 1 and fail here, in level 3's own colours.
 	_check_brand("12-ground-l3 draws its level", "12-ground-l3", 2, MIN_LEVEL_SHARE)
 
-	# The run-over marker. 13-crossing is the same chef in the same cell of the same
-	# patty as 14-unmarked, with two of its three cells run over, so the only thing
-	# that can differ is the thickness.
+	# The stomps. 13-crossing is the same chef standing clear of the same patty as
+	# 14-unmarked, with one middle cell pressed down, so the only thing that can
+	# differ is that cell's offset.
 	#
-	# Against 14 rather than 06 on purpose: see _check_thinner. Distinctness alone
-	# would not do either - 13 differs from 06 because the chef is standing somewhere
-	# else, which it would do with the marker drawing nothing at all.
-	_check_thinner("13-crossing draws its patty thinner than the unmarked one",
-		"13-crossing", "14-unmarked", Food.color_of(Food.Kind.PATTY),
-		MIN_SQUASH_DROP_PX)
+	# Against 14 rather than 06 on purpose: see _check_same_amount. Distinctness
+	# alone would not do either - 13 differs from 06 because the chef is standing
+	# somewhere else, which it would do with the stomps drawing nothing at all.
+	_check_same_amount("13-crossing keeps its patty at full size",
+		"13-crossing", "14-unmarked", Food.color_of(Food.Kind.PATTY))
+	_check_stomped("13-crossing presses a cell down", "13-crossing",
+		Food.color_of(Food.Kind.PATTY))
+	_check_distinct("13-crossing", "14-unmarked", "13-crossing differs from 14-unmarked")
 	_check_distinct("14-unmarked", "06-play", "14-unmarked differs from 06-play")
 
 
@@ -320,33 +323,112 @@ func _check_brand(desc: String, shot: String, level_index: int, min_share: float
 		min_share)
 
 
-## That `squashed` shows less of a colour than `whole` does, by at least `min_drop`.
+## That `moved` shows about as much of a colour as `whole` does, and no less.
 ##
-## The run-over marker is the one thing in the game that is measured by being
-## *smaller* than it should be, so every other check here is a floor and this one is
-## a difference. It is a difference between two captures of the same chef standing in
-## the same cell of the same patty, which is what makes it mean anything: compare the
-## marked capture against the level's baseline instead and the chef is somewhere
-## else in that one, occluding part of the very pixels being counted, so a smaller
-## count would be consistent with the part being *more* covered up rather than
-## thinner, and the check would pass on the bug it exists to catch.
+## A stomp shifts a cell down and keeps its ink, so the pixel count of the part is
+## not supposed to change at all. This is the check that would fail if a stomp were
+## implemented as the thinning it replaced, or as a cell that grew into its
+## neighbour.
 ##
-## The drop is floored rather than merely signed, because "fewer" is also what a
-## capture where the part failed to draw at all produces - and that is the opposite
-## failure. A minimum says how much thinner it has to be to count as squashed.
-func _check_thinner(desc: String, squashed: String, whole: String, want: Color,
-		min_drop: int) -> void:
-	var a := _load(squashed)
+## Both captures are of the same chef standing clear of the same part, which is what
+## makes the comparison mean anything: compare against the level's baseline instead
+## and the chef is somewhere else in that one, occluding part of the very pixels
+## being counted, so a smaller count would be consistent with the part being *more
+## covered up* rather than thinner, and the check would pass on the bug it exists to
+## catch.
+func _check_same_amount(desc: String, moved: String, whole: String, want: Color) -> void:
+	var a := _load(moved)
 	var b := _load(whole)
 	if a == null or b == null:
 		return
-	var fewer := _count(a, want)
-	var more := _count(b, want)
-	if more - fewer >= min_drop:
-		_ok(desc, "%d px against %d, %d fewer" % [fewer, more, more - fewer])
+	var here := _count(a, want)
+	var there := _count(b, want)
+	var drift := absi(here - there)
+	if drift <= MAX_PATTY_PIXEL_DRIFT:
+		_ok(desc, "%d px against %d, %d apart" % [here, there, drift])
 	else:
-		_fail(desc, "%d px against %d, needed at least %d fewer"
-			% [fewer, more, min_drop], "")
+		_fail(desc, "%d px against %d, %d apart"
+			% [here, there, drift],
+			" (wanted at most %d)" % MAX_PATTY_PIXEL_DRIFT)
+
+
+## That one third of a part's colour hangs lower than the other two.
+##
+## This is the shape the whole mechanic has: the cells either side of a stomped one
+## stay exactly where they were, so the part's lower edge is no longer level across
+## its width. Counting pixels cannot see that - a cell that moved keeps its ink - so
+## the stomp is measured by where the ink is instead.
+##
+## The thirds are of the colour's own bounding box rather than of the frame, because
+## the part is three cells wide wherever the level happens to put it and the frame is
+## sixteen cells wide. Which third is the pressed one is not fixed - the capture
+## presses the near end - so this asks only that the three disagree, and reports
+## which one is out.
+##
+## The chef is standing clear of the part in this capture, which is what makes this
+## measurable at all: a chef in the stomped cell covers the only rows that moved.
+func _check_stomped(desc: String, shot: String, want: Color) -> void:
+	var image := _load(shot)
+	if image == null:
+		return
+	var box := _bbox_of(image, want)
+	if box.size == Vector2i.ZERO:
+		_fail(desc, "found no %s in the frame at all" % want.to_html(false), "")
+		return
+	var third := maxi(box.size.x / 3, 1)
+	var left := _bottom_of(image, box.position.x, box.position.x + third, want)
+	var middle := _bottom_of(image, box.position.x + third, box.position.x + 2 * third, want)
+	var right := _bottom_of(image, box.position.x + 2 * third, box.position.x + box.size.x, want)
+	var lo := mini(left, mini(middle, right))
+	var hi := maxi(left, maxi(middle, right))
+	var edges := [left, middle, right]
+	var out: String = ["left", "middle", "right"][edges.find(hi)]
+	# Two pixels rather than one: the edge is drawn from the shifted bottom and can
+	# round up into the row above it, and the neighbours' own outline is a pixel
+	# thick. A fifth of a 16px cell is 3.2px, so anything under two would be a stomp
+	# being drawn at a fraction of its size.
+	if hi >= lo + 2:
+		_ok(desc, "%s third at y=%d, others at %d, %d lower"
+			% [out, hi, lo, hi - lo])
+	else:
+		_fail(desc, "thirds level at %s/%s/%s, nothing hanging lower"
+			% [str(left), str(middle), str(right)], " (wanted at least 2)")
+
+
+## The box every pixel of `want` falls inside, or a zero rect if there are none.
+func _bbox_of(image: Image, want: Color) -> Rect2i:
+	var target := Color(want.r, want.g, want.b)
+	var from := Vector2i(-1, -1)
+	var to := Vector2i.ZERO
+	for y in image.get_height():
+		for x in image.get_width():
+			var c := image.get_pixel(x, y)
+			if absf(c.r - target.r) * 255.0 <= TOLERANCE \
+					and absf(c.g - target.g) * 255.0 <= TOLERANCE \
+					and absf(c.b - target.b) * 255.0 <= TOLERANCE:
+				from.x = maxi(from.x, 0) if from.x >= 0 else x
+				from.y = maxi(from.y, 0) if from.y >= 0 else y
+				from.x = mini(from.x, x)
+				from.y = mini(from.y, y)
+				to.x = maxi(to.x, x)
+				to.y = maxi(to.y, y)
+	if from.x < 0:
+		return Rect2i()
+	return Rect2i(from, to - from + Vector2i.ONE)
+
+
+## The lowest row in a column range that shows `want`, or -1 if it shows none.
+func _bottom_of(image: Image, from_x: int, to_x: int, want: Color) -> int:
+	var target := Color(want.r, want.g, want.b)
+	var bottom := -1
+	for x in range(maxi(from_x, 0), mini(to_x, image.get_width())):
+		for y in image.get_height():
+			var c := image.get_pixel(x, y)
+			if absf(c.r - target.r) * 255.0 <= TOLERANCE \
+					and absf(c.g - target.g) * 255.0 <= TOLERANCE \
+					and absf(c.b - target.b) * 255.0 <= TOLERANCE:
+				bottom = maxi(bottom, y)
+	return bottom
 
 
 func _check(desc: String, actual: int, op: String, want: int) -> void:

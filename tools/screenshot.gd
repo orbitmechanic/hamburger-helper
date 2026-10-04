@@ -39,7 +39,9 @@ func _ready() -> void:
 	var env_scale := OS.get_environment("SHOT_TIME_SCALE")
 	Engine.time_scale = float(env_scale) if env_scale != "" else 1.0
 	var env_phase := OS.get_environment("SHOT_UNTIL_PHASE")
-	var until_phase := int(env_phase) if env_phase != "" else -1
+	var until_phase := -1
+	if env_phase != "":
+		until_phase = int(env_phase)
 	var settle := int(OS.get_environment("SHOT_SETTLE_FRAMES")) \
 		if OS.get_environment("SHOT_SETTLE_FRAMES") != "" else 0
 
@@ -54,6 +56,7 @@ func _ready() -> void:
 
 	var reached := until_phase < 0
 	var waited := 0
+	var finished := false
 	for i in frames:
 		waited = i
 		await get_tree().process_frame
@@ -65,7 +68,10 @@ func _ready() -> void:
 			for j in settle:
 				await get_tree().process_frame
 			await get_tree().process_frame
+		if reached and "shot_done" in inst and inst.shot_done:
+			finished = true
 			break
+		# If phase is reached but shot isn't done, keep going. Don't break.
 
 	# Report what the scene thinks its own state is. Without this a stale frame
 	# is indistinguishable from a scene that never started, which is exactly the
@@ -81,6 +87,14 @@ func _ready() -> void:
 	if not reached:
 		push_error("SHOT_UNTIL_PHASE=%d not reached within %d frames (phase is %s)"
 			% [until_phase, frames, str(inst.phase) if "phase" in inst else "n/a"])
+		get_tree().quit(1)
+		return
+
+	# scripted actions know when they have finished their work. If the scene
+	# marks itself done, don't let a tight frame cap silently snap an incomplete
+	# action.
+	if "shot_done" in inst and not finished and not inst.shot_done:
+		push_error("SHOT_FRAMES=%d exhausted before shot_scripted.shot_done became true" % frames)
 		get_tree().quit(1)
 		return
 

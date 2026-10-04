@@ -1,11 +1,17 @@
 class_name Ingredient
 extends Node2D
-## One wide slice of burger sitting in the maze, waiting to be knocked down.
+## One wide slice of burger sitting in the maze, waiting to be stomped down.
 ##
-## The core rule of the game lives in knock(): walking the chef all the way
-## across a part drops it one level, and if there is another part underneath,
-## that one is knocked too, so pushing the top bun of a column walks the whole
-## column down a floor at a time. The chef never carries anything.
+## The core rule of the game lives in knock(): stomping every cell of a part drops it
+## one level, and if there is another part underneath, that one is knocked too, so
+## pushing the top bun of a column walks the whole column down a floor at a time.
+## The chef never carries anything.
+##
+## A part is several cells wide and each cell is its own space. The chef pressing one
+## moves that cell down and leaves the rest of the part exactly as it was, so the
+## marker is a row of keys going down one at a time rather than a slice getting
+## thinner. Nothing but a stomping ever marks a part, which is why the marks are
+## cleared where a fall ends and nowhere else.
 
 ## Emitted with how many levels the part dropped, for scoring.
 signal dropped(floors: int, at: Vector2i)
@@ -14,23 +20,16 @@ signal boarded(plate: LevelData.Span)
 ## Emitted when a part was knocked while an enemy was standing on it.
 signal carried_rider
 
-## One cell of the chef running over a part removes this much of the part's
-## thickness, so a crossing is five steps deep whatever the part's width.
+## How far down a stomped cell sits, as a fraction of the part's own height.
 ##
-## A fixed fifth per cell rather than a share of the width. The marker's job is to
-## say how much of *one crossing* is left, and a proportional share makes a wide
-## part look barely touched after the chef has crossed most of it: three cells of a
-## three-wide part would read as 33% rather than as three fifths of the work done.
+## A stomp moves one cell and leaves the rest of the part exactly as it was, so this
+## is a fraction of what a cell is drawn at rather than of the part's width: a fifth
+## of an ingredient height, however wide the ingredient is.
 ##
-## The consequence is that the thin end is only reachable on a part four or five
-## cells wide, and every part in the shipped levels is three. Tests use a
-## synthetic five-wide part so the floor is exercised rather than assumed.
-const CROSS_STEP := 5.0
-## Never thinner than one step's worth. A run always completes by or before this
-## many cells on a part this wide, so the floor is only reached by a part wider
-## than any there is - but a part the chef is standing in has to stay visible, and
-## zero would be indistinguishable from a cell with nothing in it.
-const MIN_THICKNESS := 1.0 / CROSS_STEP
+## It is small enough that a single cell reads as a key pressed rather than as a
+## part breaking, and the staircase three or four cells make together is what says
+## how much of the part is left.
+const STOMP_FRACTION := 1.0 / 5.0
 
 var board: Board
 var kind: Food.Kind = Food.Kind.PATTY
@@ -52,13 +51,13 @@ var falling := false
 ## up, or it only ever sees the start and the end. See swept_cells().
 var fall_from_row := -1
 var fall_to_row := -1
-## How many of this part's cells the chef has run over since he got onto it, which
-## is also how much of its thickness is still on it. See set_cross_progress().
+## Which of this part's cells the chef has stomped, one flag per cell of `cells`.
 ##
-## Set by the chef as he arrives on a cell rather than accumulated anywhere, so it
-## is a function of the crossing's own bookkeeping and cannot drift from it. Zero
-## means nothing is counting this part, and the part is drawn at full thickness.
-var cross_cells := 0
+## The part owns this rather than being told a count, because the count was never
+## the thing worth knowing: what matters is *which* spaces are down, and a number
+## pushed in from outside could disagree with the way the part is drawn without
+## anything noticing. See stomp().
+var _stomped: Array[bool] = []
 
 var _tween: Tween
 
@@ -72,6 +71,8 @@ func setup(p_board: Board, span: LevelData.Span) -> void:
 	if not board.claim(cells, self):
 		push_error("ingredient at row %d cols %d-%d overlaps something"
 			% [span.y, span.x, span.right()])
+	_stomped.resize(cells.size())
+	_stomped.fill(false)
 	position = _pixels_for_row(rest_row)
 	z_index = 4
 
@@ -97,29 +98,70 @@ func knock(extra_floors: int = 0) -> Dictionary:
 	return where
 
 
-## Records how much of this part the chef has run over. `covered` is the number of
-## distinct cells of it he has been on since he got there, not a distance and not a
-## count of arrivals, so pacing back and forth over the same cell does not advance
-## it.
+## Presses one cell of this part down. Returns true if this stomp was the one that
+## filled the last cell still at rest, which is the signal to drop the part.
 ##
-## Pushed rather than polled, and it no-ops when nothing changed, because it is
-## called on every arrival the chef makes anywhere - stepping off one part and
-## resetting it is a call that almost always arrives with the value it already
-## holds.
-func set_cross_progress(covered: int) -> void:
-	var n := maxi(covered, 0)
-	if n == cross_cells:
-		return
-	cross_cells = n
+## Idempotent, and it takes the cell rather than an index so the caller can hand
+## over the grid cell the chef is standing in without first working out which space
+## of the part that is. A cell that is not part of this part is ignored rather than
+## being clamped to an end, because the only thing that can get here with the wrong
+## cell is a part that has already fallen out from under him.
+##
+## Stomps are *not* given back when the chef steps off. That is the whole difference
+## between this and a progress meter along the part's thickness: a jammed key stays
+## jammed, and the only thing that un-jams this part is the part landing somewhere.
+## It also means a part can be half stomped, left alone for a while, and finished
+## later, which is what makes one sitting out on the ground floor worth walking to.
+func stomp(cell: Vector2i) -> bool:
+	var i := cells.find(cell)
+	if i < 0 or _stomped[i]:
+		return false
+	_stomped[i] = true
 	queue_redraw()
+	return all_stomped()
 
 
-## How thick this part is drawn right now, as a fraction of a full-thickness one.
+## Whether one cell of this part has been stomped.
+func is_stomped(cell: Vector2i) -> bool:
+	var i := cells.find(cell)
+	return i >= 0 and _stomped[i]
+
+
+## Whether every cell of this part has been stomped, which is the only thing that
+## drops it.
+func all_stomped() -> bool:
+	for down in _stomped:
+		if not down:
+			return false
+	return not _stomped.is_empty()
+
+
+## How many cells of this part are currently pressed down.
+func stomped_count() -> int:
+	var n := 0
+	for down in _stomped:
+		if down:
+			n += 1
+	return n
+
+
+## Puts every cell back up. Called when the part lands and nothing else, because a
+## part is only ever marked by a stomping and the end of a stomping's effect on it is
+## the end of a fall.
+func clear_stomps() -> void:
+	var was_down := stomped_count() > 0
+	_stomped.fill(false)
+	if was_down:
+		queue_redraw()
+
+
+## How far one stomped cell sits below its neighbours, in pixels.
+##
 ## Public because it is the one thing about the marker that is not visible in a
-## crossing query, and both the suite and the capture check need to ask how thick
-## a part is without reading pixels off it.
-func cross_thickness() -> float:
-	return maxf((CROSS_STEP - float(cross_cells)) / CROSS_STEP, MIN_THICKNESS)
+## crossing query, and both the suite and the capture check need to ask how far a
+## part has moved without reading pixels off it.
+func stomp_drop() -> float:
+	return CELL_H * STOMP_FRACTION
 
 
 ## Moves down one level, chaining into whatever is underneath.
@@ -211,18 +253,14 @@ func _on_fallen() -> void:
 	falling = false
 	fall_from_row = -1
 	fall_to_row = -1
-	# Back to full thickness once the part has landed, and not when the crossing
-	# completed: a part that was squashed the whole way down and is thin again the
-	# moment it lands reads as the crossing being undone, and resetting at the top
-	# of the fall instead would pop it back to full in the same frame the drop
-	# starts, throwing away the beat the marker just earned. A part knocked by a
-	# cascade or a rider while it was partly run over lands the same way.
-	#
-	# Resetting here rather than in _relocate() is also what makes this the only
-	# place to get right: a part is not marked run-over by anything but a crossing,
-	# so the end of that crossing's effect on it is the end of a fall.
-	cross_cells = 0
-	queue_redraw()
+	# Every cell back up once the part has landed, and not when the last one was
+	# stomped: a part pressed down the whole way down and popped back the moment it
+	# landed reads as the stomps being undone, and clearing at the top of the fall
+	# instead would put it back up in the same frame the drop starts, throwing away
+	# the beat the marker just earned. Pressed cells travel down and fill out on
+	# landing, which reads as squeeze and release. A part knocked by a cascade or a
+	# rider while it was partly stomped lands the same way.
+	clear_stomps()
 
 
 ## Every cell this part passes through on its way down, including the one it lands
@@ -256,26 +294,60 @@ func _pixels_for_row(row: int) -> Vector2:
 	return Rect2(cells[0].x, row, cells.size(), 1).get_center() * Cfg.TILE
 
 
+## How tall one cell of a part is drawn, in pixels: a cell less a pixel of outline
+## on each side, so a part at rest fills its row the way a slice of burger should.
+const CELL_H := Cfg.TILE - 2.0
+
+## How thick the highlight along the top of a cell is.
+const ACCENT_H := 4.0
+
+
+## Where the top of one cell is drawn, in this part's own space.
+##
+## Stomped cells sit lower than the rest and nothing else about them changes. The
+## part's own height is the unit rather than the tile, so the step is a fifth of a
+## slice whether or not the part is wide.
+func _top_of(index: int) -> float:
+	var y := -Cfg.TILE * 0.5 + 1.0
+	if _stomped[index]:
+		y += stomp_drop()
+	return y
+
+
+## One cell's draw rect. Cells are a tile wide and run edge to edge, so a part at
+## rest is one unbroken slice; only the outline below knows that they can differ.
+func _cell_rect(index: int) -> Rect2:
+	var x := float(index - (cells.size() - 1) * 0.5) * Cfg.TILE
+	return Rect2(x - Cfg.TILE * 0.5, _top_of(index), Cfg.TILE, CELL_H)
+
+
 func _draw() -> void:
-	var w := float(cells.size() * Cfg.TILE)
-	# A part the chef has run over is drawn compressed, with its top edge exactly
-	# where it always was. He walks *in* a part's cell rather than on top of one, so
-	# his boots are at the top of this rect and the top edge is what has to hold
-	# still. Letting it drop would open a visible gap between his boots and the
-	# patty. The underside is the edge that is free to rise, and a part that thins
-	# from underneath reads as pressed down rather than as eaten away.
-	var full := Cfg.TILE - 2.0
-	var k := cross_thickness()
-	var r := Rect2(-w * 0.5 + 1.0, -Cfg.TILE * 0.5 + 1.0, w - 2.0, full * k)
-	draw_rect(r, Cfg.COL_OUTLINE)
-	draw_rect(r.grow(-1.0), Food.color_of(kind))
-	# A highlight along the top and a darker seam below, so a wide part still
-	# reads as one slice rather than a row of tiles. Both scale with the part, which
-	# is what keeps them in order on a part at its floor: at a fifth of its height
-	# the seam lands just above the bottom edge rather than hanging below it, which
-	# is what scaling the offsets and the heights independently would do.
-	draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2.0, 4.0 * k)),
-		Food.accent_of(kind))
-	draw_rect(Rect2(r.position + Vector2(2, r.size.y - 5.0 * k),
-			Vector2(r.size.x - 4.0, 2.0 * k)),
-		Food.accent_of(kind).darkened(0.25))
+	var fill := Food.color_of(kind)
+	var accent := Food.accent_of(kind)
+	# Fills first, in one pass with no seam between cells: a part nobody has stomped
+	# yet has to look exactly as it always has, one slice. The highlight and the seam
+	# are per cell rather than one strip across the part, so a cell that has gone
+	# down takes its own bands with it instead of leaving them floating at the old
+	# height.
+	for i in cells.size():
+		var r := _cell_rect(i)
+		draw_rect(r, fill)
+		draw_rect(Rect2(r.position + Vector2(1, 1), Vector2(r.size.x - 2.0, ACCENT_H)),
+				accent)
+		draw_rect(Rect2(r.position + Vector2(2, r.size.y - 5.0),
+				Vector2(r.size.x - 4.0, 2.0)), accent.darkened(0.25))
+	# Then the outline, which follows the silhouette rather than each cell's box.
+	# Every cell gets its top and bottom, the part gets its two outside edges, and a
+	# shared edge is drawn only where two neighbours are at different heights - and
+	# that edge is the step. Outlining every cell boundary instead would make a part
+	# at rest read as a row of tiles, which is the one thing this has to avoid.
+	for i in cells.size():
+		var r := _cell_rect(i)
+		draw_rect(Rect2(r.position.x, r.position.y, r.size.x, 1.0), Cfg.COL_OUTLINE)
+		draw_rect(Rect2(r.position.x, r.end.y - 1.0, r.size.x, 1.0), Cfg.COL_OUTLINE)
+		var down_left := i > 0 and r.position.y != _cell_rect(i - 1).position.y
+		var down_right := i < cells.size() - 1 and r.position.y != _cell_rect(i + 1).position.y
+		if i == 0 or down_left:
+			draw_rect(Rect2(r.position.x, r.position.y, 1.0, r.size.y), Cfg.COL_OUTLINE)
+		if i == cells.size() - 1 or down_right:
+			draw_rect(Rect2(r.end.x - 1.0, r.position.y, 1.0, r.size.y), Cfg.COL_OUTLINE)

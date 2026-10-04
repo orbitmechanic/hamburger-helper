@@ -132,16 +132,18 @@ func is_ladder(cell: Vector2i) -> bool:
 ##
 ## Every level was sending him back to the cell the level was authored to start him
 ## in, which on all three was off to one side. That reads as the level restarting
-## rather than the chef being put back on his feet, and on a level whose bottom
+## rather than as the chef being put back on his feet, and on a level whose bottom
 ## floor starts further right it walked him a long way back from wherever he
 ## actually died. The middle of the floor is the same on every level and is where
 ## the eye already is, since the whole board is built around it.
 ##
-## Scans the bottom walkable row and takes the middle cell that is not a wall, a
-## ledge or a plate, so a level that hangs a platform across the middle drops him
-## just clear of it rather than inside it. Falls back to the level's own spawn if a
-## level has no floor at all to speak of, which is better than returning a cell in
-## a wall and leaving the chef stuck in it.
+## Scans up from the bottom for the lowest row with somewhere to stand rather than
+## assuming a depth, so a level with a thicker base still works. Plate cells are not
+## somewhere to stand: the plates are set into the ground one row below the floor,
+## and the bottom row of the grid is therefore all plate and wall, which would
+## otherwise look like a row full of floor and send him down onto a plate. Falls
+## back to the level's own spawn if a level has no floor at all to speak of, which
+## is better than returning a cell in a wall and leaving the chef stuck in it.
 func _find_respawn_cell() -> Vector2i:
 	var row := Cfg.GRID_H - 1
 	# The bottom row is a wall on every level so far; the floor is the row above
@@ -152,17 +154,28 @@ func _find_respawn_cell() -> Vector2i:
 	var open: Array[Vector2i] = []
 	for x in Cfg.GRID_W:
 		var cell := Vector2i(x, row)
-		if not blocks_player(cell) and tile_at(cell) != Tile.PLATE:
+		if _standable(cell):
 			open.append(cell)
 	if open.is_empty():
 		return chef_spawn
 	return open[open.size() / 2]
 
 
+## Whether a cell is somewhere an actor can stand and stay: walkable, and not one of
+## the plates the ground is set with.
+##
+## A plate supports the floor above it - it is what a finished burger stands on -
+## but nothing that walks may ever be in it. The plates are in the ground, there is
+## no ladder onto them and the ground holds everything up, so the only way in would
+## be a fall out of the world.
+func _standable(cell: Vector2i) -> bool:
+	return not blocks_player(cell) and tile_at(cell) != Tile.PLATE
+
+
 ## Whether any cell of a row is somewhere an actor can stand.
 func _row_has_a_stand(row: int) -> bool:
 	for x in Cfg.GRID_W:
-		if not blocks_player(Vector2i(x, row)):
+		if _standable(Vector2i(x, row)):
 			return true
 	return false
 
@@ -257,6 +270,11 @@ func burgers_done() -> int:
 ## "row" is where the falling ingredient ends up, which is one above the thing it
 ## landed on.
 func landing_spot(cells: Array[Vector2i], support_row: int) -> Dictionary:
+	# The ground floor first, and separately, because it is the one place a part can
+	# be standing directly above something with nothing in between.
+	var under := _plate_under(cells, support_row)
+	if under != null:
+		return {"row": support_row - 1, "ingredient": null, "plate": under}
 	for y in range(support_row + 1, Cfg.GRID_H):
 		var hit_ing: Ingredient = null
 		for cell in cells:
@@ -288,6 +306,28 @@ func _plate_blocks(plate: LevelData.Span, y: int) -> bool:
 	var size := stack(plate.x).size()
 	var top := plate.y - size + 1
 	return y >= top and y <= plate.y
+
+
+## The plate a part standing on row `y` is already over, or null.
+##
+## A plate sits in the ground itself, one row below the floor the chef walks on, so
+## a part resting on the ground floor is already above one and there is no storey
+## under the ground for it to fall onto. This is checked before the scan in
+## landing_spot(), which deliberately starts one row *under* a part's support
+## because it is looking for what is in front of a ledge - and a ground floor has no
+## front to fall off.
+##
+## Any one of the part's cells finding a plate boards the whole part, which is what
+## the main scan already does and what lets a level put a part a column or so off
+## its plate's centre.
+func _plate_under(cells: Array[Vector2i], y: int) -> LevelData.Span:
+	for cell in cells:
+		if cell.x < 0 or cell.x >= Cfg.GRID_W:
+			continue
+		var plate := plate_span_at(Vector2i(cell.x, y))
+		if plate != null and _plate_blocks(plate, y):
+			return plate
+	return null
 
 
 ## The plate whose column covers this cell, or null.

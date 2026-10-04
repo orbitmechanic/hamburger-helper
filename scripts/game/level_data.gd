@@ -26,11 +26,15 @@ extends RefCounted
 ##     pushed off any storey falls the whole height of the level to the plate.
 ##     A burger's parts are therefore stacked in one column above its plate, and
 ##     the way to move them is from the top down: the cascade carries the lot.
-##   * A plate sits on the ground floor. The burger on it grows upward from the
-##     plate, so the column above a plate must stay clear for as many layers as
-##     that burger needs.
-##   * The ground storey is tall on purpose. Ledges are on rows 1/4/7/14, so rows
-##     8..12 are open floor above the plates on row 13, and a finished burger
+##   * A plate is set into the ground on the bottom row, a level *below* the
+##     floor the chef walks on, which is how BurgerTime has it. Nothing that
+##     walks can reach that row - there is no ladder onto it and the ground
+##     holds the floor up - so only food ever lands on a plate. The chef's
+##     ground floor is the row above, and a part resting there is already above
+##     the plate underneath it, so a lower bun can start on the floor and be
+##     stomped down onto it.
+##   * The ground storey is tall on purpose. Ledges are on rows 1/4/7, so rows
+##     8..13 are open floor above the plates on row 14, and a finished burger
 ##     sits in that space without standing in any walkway. Putting a ledge on
 ##     row 10 instead, as an earlier version did, capped every burger at two
 ##     layers and made all three levels impossible to finish.
@@ -131,21 +135,29 @@ class Level:
 ## Generated once by tools/make_levels.gd and pasted here, because a level should
 ## be readable in a diff and editable by hand rather than built at runtime. The
 ## shape of each is three ingredient storeys on walk rows 0/3/6 over ledges on
-## rows 1/4/7, then a tall open ground storey on rows 8..13 above the ledge on
-## row 14, with the plates along the ground and a burger's parts stacked in one
-## plate's column - the plate collects them in the order they fall, which is the
-## order the recipe needs.
+## rows 1/4/7, then a tall open ground storey on rows 8..13 above the plates, which
+## are set into the ground on row 14 - one level below the floor the chef walks on,
+## where nothing that walks can follow it. A burger's parts are collected in the
+## order they fall, which is the order the recipe needs, and the lowest part of one
+## column starts on the ground floor rather than on a ledge: stomping it sends it
+## the last step, onto the plate underneath.
 ##
 ## The nasties are spread over the three ingredient storeys, one of each kind, and
 ## start as far from the chef as the maze allows. The ground storey is deliberately
 ## left clear of them. It is the one lane in the level the chef cannot pass anybody in
-## - it is a cell wide, with the plates along it and the parts to be carried down onto
-## them - so a nasty walking it turns the ground from somewhere to travel into a place
-## the chef can be shut inside, and there is no way past it but pepper. Measured over
-## fifteen runs that was the only thing reliably killing the chef inside ten seconds;
-## the same three levels with the ground clear survive the whole window. The storeys
-## above it are full width, so a nasty there is something to outrun rather than
+## - it is a cell wide, with the plates below it and the parts to be carried down
+## onto them - so a nasty walking it turns the ground from somewhere to travel into a
+## place the chef can be shut inside, and there is no way past it but pepper. Measured
+## over fifteen runs that was the only thing reliably killing the chef inside ten
+## seconds; the same three levels with the ground clear survive the whole window. The
+## storeys above it are full width, so a nasty there is something to outrun rather than
 ## something to be trapped by.
+##
+## One patty in each level sits on that ground floor, always the patty belonging to
+## the plate furthest from the chef's spawn, so the walk down to it is the longest the
+## ground lane offers and finishing it is the last step of that burger rather than one
+## push of several. The recipe is untouched by the move: a plate collects its parts in
+## the order they fall, and the floor was always the lowest thing left to fall from.
 const LEVELS: Array = [
 	{
 		"name": "LUNCH RUSH",
@@ -157,16 +169,15 @@ const LEVELS: Array = [
 			".lll..rrr2.lll..",
 			"#####=######=###",
 			".....=......=...",
-			".mmm3.mmm..mmm..",
+			".mmm3.mmm.......",
 			"=#########=####=",
 			"=.........=....=",
 			"=.........=....=",
 			"=.........=....=",
 			"=.........=....=",
 			"=.........=....=",
-			"@OOO..OOO..OOO..",
-			"################",
-		],
+			"@..........mmm..",
+			"#OOO##OOO##OOO##"],
 	},
 	{
 		"name": "DOUBLE SHIFT",
@@ -178,16 +189,15 @@ const LEVELS: Array = [
 			"ttt.lll.2rrr.lll",
 			"#######=#######=",
 			".......=.......=",
-			"mmm.mmm3.mmm.mmm",
+			"mmm.mmm3.mmm....",
 			"###=########=###",
 			"...=........=...",
 			"...=........=...",
 			"...=........=...",
 			"...=........=...",
 			"...=........=...",
-			"OOO@OOO..OOO.OOO",
-			"################",
-		],
+			"...@.........mmm",
+			"OOO#OOO##OOO#OOO"],
 	},
 	{
 		"name": "DINNER RUSH",
@@ -199,16 +209,15 @@ const LEVELS: Array = [
 			".lll..rrr..ttt1.",
 			"=#########=#####",
 			"=.........=.....",
-			".mmm2.mmm..mmm..",
+			".mmm2.mmm.......",
 			"=####=########=#",
 			"=....=........=.",
 			"=....=........=.",
 			"=....=........=.",
 			"=....=........=.",
 			"=....=........=.",
-			"@OOO..OOO..OOO..",
-			"################",
-		],
+			"@..........mmm..",
+			"#OOO##OOO##OOO##"],
 	},
 ]
 
@@ -379,6 +388,20 @@ static func validate(lv: Level) -> PackedStringArray:
 	for cell in lv.enemies:
 		if not walkable.has(cell) and not walkable.has(cell + Vector2i.UP):
 			problems.append("enemy at %s can never leave its floor" % cell)
+
+	# The plates are in the ground, below the floor the chef walks on, and nothing
+	# that walks may be able to reach them - only food falls onto one. The geometry
+	# already guarantees it on a well formed level, because a plate has no floor
+	# beneath it and so is neither standable nor something a ladder can end on. This
+	# checks the guarantee rather than trusting it, because the one way to break it is
+	# to put a rung on the bottom row, and that would look completely ordinary in the
+	# map.
+	for plate in lv.plates:
+		for cell in plate.cells():
+			if walkable.has(cell):
+				problems.append("plate at %s is reachable by the chef: the chef must never stand on one"
+					% _plate_label(plate))
+				break
 	return problems
 
 
@@ -438,7 +461,9 @@ static func _char_at(lv: Level, cell: Vector2i) -> String:
 
 
 ## Whether the chef can stand in a cell. He needs a floor: a platform, a wall, a
-## plate, or the top of a ladder he has just climbed.
+## plate, or the top of a ladder he has just climbed. Nothing here excludes a plate,
+## because on the bottom row a plate cell has no floor beneath it and so is already
+## excluded - that is the whole reason the chef cannot reach one.
 static func _standable(lv: Level, cell: Vector2i) -> bool:
 	if not _passable(lv, cell):
 		return false
@@ -523,5 +548,11 @@ static func _ladder_runs(lv: Level) -> Array:
 	return runs
 
 
+## Whether there is something solid under a cell.
+##
+## A plate counts, because a plate is set into the ground: the ground floor above it
+## is what the chef walks on and what a part resting there is sitting on, so the
+## two are different floors of the same cell and both are a floor. The bottom row is
+## not a floor for anything, because there is nothing under it.
 static func _supported(lv: Level, cell: Vector2i) -> bool:
-	return _char_at(lv, cell + Vector2i.DOWN) in ["#", "H", "="]
+	return _char_at(lv, cell + Vector2i.DOWN) in ["#", "H", "=", PLATE_CHAR]

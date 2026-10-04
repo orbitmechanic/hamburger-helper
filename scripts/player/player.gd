@@ -2,13 +2,13 @@ class_name Player
 extends Mover
 ## The chef.
 ##
-## He does not carry anything. The whole game is walking across a burger part so
-## that it drops one level, so the things that used to be the core of this script
-## - the tray, the stack on it, grabbing, throwing, salting - are gone. What is
-## left is movement across the grid plus one rule: notice which part of which
-## ingredient he has walked over, and knock it down when he has covered the lot.
+## He does not carry anything. The whole game is stomping every space of a burger
+## part so that it drops one level, so the things that used to be the core of this
+## script - the tray, the stack on it, grabbing, throwing, salting - are gone. What
+## is left is movement across the grid plus one rule: notice which part of which
+## ingredient he has stood in, and knock it down when he has covered the lot.
 
-## Emitted with the ingredient he just walked the full width of.
+## Emitted with the ingredient he just stomped every space of.
 signal crossed(ing: Ingredient)
 
 enum St { WALK, CLIMB, FALL, JUMP }
@@ -31,12 +31,11 @@ var pepper_left := 0
 var spray_time := 0.0
 ## Peak of the hop in flight, so a running dodge and a standing reach can arc
 ## differently.
-var _jump_lift := JUMP_LIFT
+## The cell place() put the chef in, which must not count as a stomp. Cleared as
+## soon as he is anywhere else.
+var _placed_at := Vector2i(-1, -1)
 
-## The ingredient currently being walked over, and which of its cells have been
-## covered. A part is only pushed when every one of them has been.
-var _cross: Ingredient = null
-var _covered := {}
+var _jump_lift := JUMP_LIFT
 ## Free-running clock for the animations that are not tied to a step, so standing
 ## still breathes.
 var _anim := 0.0
@@ -71,20 +70,20 @@ func setup(p_board: Board, start: Vector2i) -> void:
 	queue_redraw()
 
 
-## Puts the chef somewhere, clearing any crossing in progress. Used for the start
-## of a level and for a respawn after being caught: either way a part the chef was
-## halfway across must not stay half counted, or respawning on top of a part would
-## knock it down without the chef having walked anywhere.
+## Puts the chef somewhere, used for the start of a level and for a respawn after
+## being caught.
+##
+## Neither stomps the cell he is put on. A respawn lands him in the middle of the
+## ground floor, and if that happened to be a part that had been stomped already the
+## last space would go down under a chef who had walked nowhere - the exact thing the
+## placement is there to avoid.
 func place(at: Vector2i) -> void:
 	super.place(at)
-	# A part he was part way across when he was moved has to give its mark back.
-	# Not through _close_crossing() even though that would tidy this up: a crossing
-	# must not *complete* because the chef was repositioned, and place() is called by
-	# tests and by anything that puts him somewhere rather than by play.
-	if _cross != null:
-		_cross.set_cross_progress(0)
-	_cross = null
-	_covered.clear()
+	# The cell he is put into is not an arrival, so it is not a stomp. Stomps last
+	# until the part lands, so unlike the old crossing mark there is nothing to wind
+	# back here: it is enough to refuse this one cell, and stepping off and back on
+	# stomps it like any other arrival.
+	_placed_at = at
 	moving = false
 	state = St.WALK
 	# A chef who is standing somewhere is playing, so whatever the level had him
@@ -357,45 +356,30 @@ func _arrived() -> void:
 
 
 ## Notices which cells of which ingredient the chef has stood in, and pushes the
-## part once he has been all the way across it. Crossing is measured in cells
-## covered rather than distance travelled, so pacing back and forth over a wide
-## part still works, and a part is never pushed by a brush against its edge.
+## part once every one of them has been stomped.
 ##
-## The part is told how much of it has been run over here rather than through a
-## signal, because a crossing's mark is a fact about the part rather than a
-## decision anybody makes: what a completed crossing *does* is policy, and that is
-## what crossed is for. Going through a signal would mean the harness in the suite,
-## which stands in for the Game by connecting crossed itself, had to stand in for
-## this too - and a marker that only appears when the Game is present is a marker
-## the rule tests cannot see.
+## A cell is stomped when the chef arrives in it, which includes landing on one from
+## a hop or off a ladder - that is the whole reason stomps are per space rather than
+## per crossing - and excludes a cell he was put into by place().
+##
+## Stomping is per space and per arrival, so pacing back and forth over a wide part
+## still works and a part is never pushed by a brush against its edge. A space that
+## is already down is a no-op, which is what lets the chef leave a part half stomped,
+## wander off, and come back to finish it.
+##
+## The part is asked rather than signalled, because a cell being pressed down is a
+## fact about the part rather than a decision anybody makes: what a fully stomped
+## part *does* is policy, and that is what crossed is for. Going through a signal
+## would mean the harness in the suite, which stands in for the Game by connecting
+## crossed itself, had to stand in for this too - and a marker that only appears when
+## the Game is present is a marker the rule tests cannot see.
 func _track_crossing() -> void:
-	var here := board.ingredient_at(cell)
-	if here != _cross:
-		_close_crossing()
-		_cross = here
-	if _cross != null and not _covered.has(cell):
-		# Pushed as the count of distinct cells rather than incremented, so the part
-		# always shows exactly what _covered holds and the two cannot disagree.
-		_covered[cell] = true
-		_cross.set_cross_progress(_covered.size())
-
-
-func _close_crossing() -> void:
-	if _cross != null and _covered.size() >= _cross.cells.size():
-		# Completed, and the mark is deliberately left on. The part is about to fall
-		# and it restores itself when it lands, so it carries the squash down with it.
-		var target := _cross
-		_cross = null
-		_covered.clear()
-		crossed.emit(target)
+	if cell == _placed_at:
 		return
-	if _cross != null:
-		# Abandoned - he stepped off the part before covering all of it - so the
-		# coverage is being thrown away and the mark has to go with it. Left on, the
-		# part would sit there squashed with nothing counting it and no way back.
-		_cross.set_cross_progress(0)
-	_cross = null
-	_covered.clear()
+	_placed_at = Vector2i(-1, -1)
+	var ing := board.ingredient_at(cell)
+	if ing != null and ing.stomp(cell):
+		crossed.emit(ing)
 
 
 # --- Drawing ---------------------------------------------------------------

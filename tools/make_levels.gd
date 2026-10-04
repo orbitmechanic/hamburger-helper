@@ -20,24 +20,36 @@ extends SceneTree
 ## upward from its plate, one row per layer, and it has to have room to finish
 ## without standing in a doorway. So the top of the maze is a regular stack of
 ## three ingredient storeys, and then the ground storey is deliberately tall:
-## rows 8..13 are all open, which is five clear rows above a plate on row 13.
-## Four layers reach row 9 and stop, still clear of the row 7 ledge and clear of
-## every walk row, so a finished burger sits in the middle of the ground floor
-## and blocks nothing. An earlier version put a ledge on row 10, which meant a
-## burger could never get past two layers and no level could be completed.
+## rows 8..13 are all open, which is six clear rows above a plate set into the
+## ground on row 14. Four layers reach row 11 and stop, still clear of the row 7
+## ledge and clear of every walk row, so a finished burger sits in the middle of
+## the ground floor and blocks nothing. An earlier version put a ledge on row
+## 10, which meant a burger could never get past two layers and no level could
+## be completed.
+##
+## The plate is on the bottom row rather than on the one above it because that is
+## what makes a lower bun able to start on the floor: a part resting on row 13 is
+## already directly above the plate under it, so stomping it the last step sends it
+## onto the plate instead of dropping it past it. Nothing that walks can be in row
+## 14 - there is no ladder onto it and the row above it holds the floor up - so
+## the plates stay out of the chef's way while still catching food.
 
 const W := 16
 const H := 15
 ## Solid ledges. The chef stands on the row above each of these.
 const PLATFORM_ROWS := [1, 4, 7, 14]
 ## Rows he can stand in. Note the gap between 6 and 13: that is the ground
-## storey, and it is empty on purpose so a burger has somewhere to grow.
+## storey, and it is empty on purpose so a burger has somewhere to grow. Row 13
+## is the floor the plates are set into rather than a row he stands in.
 const WALK_ROWS := [0, 3, 6, 13]
 ## Where a burger's parts wait, deepest first, and the order a plate collects
 ## them in. Three storeys, so three parts plus the base bun: a four-part burger.
 const INGREDIENT_ROWS := [6, 3, 0]
-## The ground row a plate sits on.
-const PLATE_ROW := 13
+## The bottom row, where a plate is set into the ground. One row below the floor
+## the chef walks on.
+const PLATE_ROW := 14
+## The lowest row a part can start on: the ground floor directly above the plates.
+const FLOOR_ROW := PLATE_ROW - 1
 
 
 class Grid:
@@ -61,17 +73,25 @@ class Grid:
 		return rows.duplicate()
 
 
-## A burger: a plate on the ground and the parts that will be stacked on it.
+## A burger: a plate in the ground and the parts that will be stacked on it.
 ## `parts` is bottom-to-top excluding the base bun, which the plate provides.
+##
+## `ground_patty` puts the lowest part on the ground floor instead of on the lowest
+## ledge, which leaves that storey empty over this burger. The recipe does not
+## change: a plate collects its parts in the order they fall, and the floor was
+## always the lowest thing left to fall from - it is just the last step now rather
+## than one of several.
 class Burger:
 	var x := 0
 	var width := 3
 	var parts: Array = []
+	var ground_patty := false
 
-	func _init(p_x: int, p_w: int, p_parts: Array) -> void:
+	func _init(p_x: int, p_w: int, p_parts: Array, p_ground: bool = false) -> void:
 		x = p_x
 		width = p_w
 		parts = p_parts
+		ground_patty = p_ground
 
 	func right() -> int:
 		return x + width - 1
@@ -108,13 +128,17 @@ func build(ladder_bands: Array, burgers: Array, chef_x: int, enemies: Array) -> 
 			push_error("burger at col %d has %d parts but there are only %d ingredient storeys"
 				% [burger.x, burger.parts.size(), INGREDIENT_ROWS.size()])
 		for i in mini(burger.parts.size(), INGREDIENT_ROWS.size()):
+			# Only the lowest part can go on the floor: the ones above it keep their
+			# storey, so a burger with a ground patty has a gap over its plate rather
+			# than a shorter column.
+			var row := FLOOR_ROW if i == 0 and burger.ground_patty else int(INGREDIENT_ROWS[i])
 			for k in burger.width:
-				var at := Vector2i(burger.x + k, int(INGREDIENT_ROWS[i]))
+				var at := Vector2i(burger.x + k, row)
 				g.put(at.x, at.y, String(burger.parts[i]))
 				taken[at] = "ingredient"
 
-	g.put(chef_x, PLATE_ROW, "@")
-	taken[Vector2i(chef_x, PLATE_ROW)] = "chef"
+	g.put(chef_x, FLOOR_ROW, "@")
+	taken[Vector2i(chef_x, FLOOR_ROW)] = "chef"
 
 	# Nasties are spread over the storeys rather than lined up on the ground,
 	# because walking the length of the bottom floor to find them is not a
@@ -136,7 +160,7 @@ func _initialize() -> void:
 			"burgers": [
 				[1, 3, ["m", "l", "t"]],
 				[6, 3, ["m", "r", "t"]],
-				[11, 3, ["m", "l", "t"]],
+				[11, 3, ["m", "l", "t"], true],
 			],
 			"ladders": [[0, 10], [5, 12], [4, 14]],
 			"chef": 0,
@@ -148,7 +172,7 @@ func _initialize() -> void:
 				[0, 3, ["m", "t"]],
 				[4, 3, ["m", "l", "t"]],
 				[9, 3, ["m", "r", "t"]],
-				[13, 3, ["m", "l", "t"]],
+				[13, 3, ["m", "l", "t"], true],
 			],
 			"ladders": [[3, 12], [7, 15], [5, 14]],
 			"chef": 3,
@@ -159,7 +183,7 @@ func _initialize() -> void:
 			"burgers": [
 				[1, 3, ["m", "l", "t"]],
 				[6, 3, ["m", "r", "t"]],
-				[11, 3, ["m", "t"]],
+				[11, 3, ["m", "t"], true],
 			],
 			"ladders": [[5, 14], [0, 10], [9, 15]],
 			"chef": 0,
@@ -171,7 +195,9 @@ func _initialize() -> void:
 	for spec: Dictionary in specs:
 		var burgers: Array = []
 		for b: Array in spec["burgers"]:
-			burgers.append(Burger.new(int(b[0]), int(b[1]), b[2]))
+			# The fourth field marks the burger whose lowest part starts on the
+			# ground floor. One per level, always the plate furthest from the chef.
+			burgers.append(Burger.new(int(b[0]), int(b[1]), b[2], b.size() > 3 and bool(b[3])))
 		var map := build(spec["ladders"], burgers, int(spec["chef"]), spec["enemies"])
 		out.append({"name": spec["name"], "map": map})
 

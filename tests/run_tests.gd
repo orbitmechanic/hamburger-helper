@@ -47,9 +47,13 @@ func _run() -> void:
 	await _test_chain_reaction()
 	await _test_column_builds_a_burger()
 	await _test_crossing_needs_the_full_width()
-	await _test_cross_progress_is_a_fifth_per_cell()
-	await _test_cross_progress_covers_each_cell_once()
-	await _test_cross_progress_is_given_back_and_restored()
+	await _test_stomp_moves_one_cell_and_no_others()
+	await _test_stomp_follows_the_cells_the_chef_stands_on()
+	await _test_stomps_survive_leaving_and_clear_on_landing()
+	await _test_a_part_on_the_floor_boards_the_plate_below_it()
+	await _test_a_stomped_part_on_a_plate_becomes_a_burger_layer()
+	await _test_plates_are_out_of_reach()
+	await _test_respawn_is_on_the_floor_not_the_plates()
 	await _test_player_jump()
 	await _test_reach_grabs_a_jar_above()
 	await _test_ladder_climb()
@@ -336,7 +340,7 @@ func _test_level_geometry() -> void:
 		var grounded := true
 		var over_plate := true
 		for ing in lv.ingredients:
-			if lv.map[ing.y + 1][ing.x] not in ["#", "H", "="]:
+			if lv.map[ing.y + 1][ing.x] not in ["#", "H", "=", LevelData.PLATE_CHAR]:
 				grounded = false
 			var home: LevelData.Span = null
 			for plate in lv.plates:
@@ -598,17 +602,17 @@ func _test_board_tiles() -> void:
 
 	check(board.tile_at(Vector2i(0, 1)) == Board.Tile.PLATFORM, "a ledge is a platform")
 	check(board.tile_at(Vector2i(0, 2)) == Board.Tile.EMPTY, "open space is empty")
-	check(board.tile_at(Vector2i(0, 13)) == Board.Tile.PLATE, "a plate is a plate")
+	check(board.tile_at(Vector2i(0, 14)) == Board.Tile.PLATE, "a plate is a plate")
 
 	# Ledges stop the chef; nothing else does. Food and plates are floor.
 	check(board.blocks_player(Vector2i(0, 1)), "a ledge blocks the chef")
 	check(not board.blocks_player(Vector2i(4, 2)), "open air does not")
-	check(not board.blocks_player(Vector2i(0, 13)), "a plate does not block the chef")
+	check(not board.blocks_player(Vector2i(0, 14)), "a plate does not block the chef")
 	check(not board.is_ladder(Vector2i(0, 0)), "open space is not a ladder")
 
 	check(board.floor_below(Vector2i(3, 0)), "there is a ledge under row 0")
 	check(not board.floor_below(Vector2i(3, 2)), "there is nothing under open row 2")
-	check(board.is_plate(Vector2i(0, 13)), "the plate is where it was put")
+	check(board.is_plate(Vector2i(0, 14)), "the plate is where it was put")
 
 	# Occupancy is exclusive, and a wide claim is all-or-nothing.
 	var cells: Array[Vector2i] = [Vector2i(0, 13), Vector2i(1, 13)]
@@ -848,70 +852,85 @@ func _test_crossing_needs_the_full_width() -> void:
 	h.teardown()
 
 
-## The marker's arithmetic, which is the part that does not need the chef.
+## A stomp moves one cell and leaves the rest of the part alone.
 ##
-## Driven through set_cross_progress rather than by walking a chef over a part,
-## because this is about the mapping from cells run over to thickness and nothing
-## about who walked where. The fifth-per-cell step and the floor at one fifth are
-## both checked past the point they stop changing, because a floor that is only
-## asserted at the value it happens to stop at is not a floor - it is a coincidence
-## that holds for one input.
-func _test_cross_progress_is_a_fifth_per_cell() -> void:
-	_begin("run-over thins a part one fifth per cell")
+## Driven through stomp() rather than by walking a chef over a part, because this is
+## about the mapping from one cell to one offset and nothing about who walked where.
+## Five cells wide, which no shipped part is, so that stopping part way across is
+## possible at all: a three wide part has no state between its first stomp and its
+## drop, which is what makes every "part way" claim about it untestable.
+func _test_stomp_moves_one_cell_and_no_others() -> void:
+	_begin("a stomp moves one cell and no others")
 	var h := _Harness.new(self)
 	await h.setup(_synthetic_map())
 	if h.board == null:
 		return
-	# Five wide, which no shipped part is: it is the only width that spends the
-	# whole scale and so the only one that reaches the floor.
 	var ing := _add_ingredient(h, h.board, "m", 2, 5, 6)
-	# Above the floor each cell costs exactly a fifth.
-	for cell in 5:
-		ing.set_cross_progress(cell)
-		check(is_equal_approx(ing.cross_thickness(), 1.0 - 0.2 * float(cell)),
-			"%d cells run over draws it at %.0f%%" % [cell, (1.0 - 0.2 * float(cell)) * 100.0],
-			"thickness was %.4f" % ing.cross_thickness())
-	check(is_equal_approx(ing.cross_thickness(), 0.2), "four cells in leaves one fifth",
-		"thickness was %.4f" % ing.cross_thickness())
-	# Past four the floor holds: a part five or six cells wide completes its crossing
-	# on the fifth or sixth cell, so these inputs happen rather than being reachable
-	# in play, and a part the chef is standing in must stay visible regardless.
-	ing.set_cross_progress(5)
-	check(is_equal_approx(ing.cross_thickness(), 0.2), "a part never thins past one fifth",
-		"thickness was %.4f" % ing.cross_thickness())
-	ing.set_cross_progress(6)
-	check(is_equal_approx(ing.cross_thickness(), 0.2), "still one fifth past the width",
-		"thickness was %.4f" % ing.cross_thickness())
-	ing.set_cross_progress(-3)
-	check(is_equal_approx(ing.cross_thickness(), 1.0), "a negative count is full thickness",
-		"thickness was %.4f" % ing.cross_thickness())
+	var drop := ing.stomp_drop()
+	check(drop > 0.0, "a stomp moves the cell down", "drop was %.3f" % drop)
+	check(drop < Cfg.TILE, "and by less than a cell, so the chef still reads as standing in it",
+		"drop was %.3f of a %dpx cell" % [drop, Cfg.TILE])
+
+	# The middle cell only. This is the case a whole-part marker cannot express at
+	# all: it is what a chef who drops onto the middle of a part from a ladder or a
+	# hop leaves behind.
+	var mid := ing.cells[2]
+	check(not ing.stomp(mid), "stomping the middle cell does not drop a five wide part")
+	check(ing.is_stomped(mid), "the middle cell is down")
+	check(ing.stomped_count() == 1, "and it is the only one",
+		"%d cells down" % ing.stomped_count())
+	for cell in ing.cells:
+		if cell == mid:
+			continue
+		check(not ing.is_stomped(cell),
+			"cell %s was not touched by stomping its neighbour" % str(cell))
+
+	# Pacing over a cell that is already down is a no-op, so it cannot be counted
+	# twice and cannot drop the part early.
+	check(not ing.stomp(mid), "stomping the same cell again does nothing")
+	check(ing.stomped_count() == 1, "still one cell down")
+
+	# A cell that is not part of this part is refused rather than clamped to an end.
+	check(not ing.stomp(Vector2i(0, 6)), "a cell that is not part of the part is ignored")
+	check(ing.stomped_count() == 1, "and changes nothing")
+
+	# The last cell is the one that reports the drop, and it reports it once.
+	for i in 5:
+		if i == 2:
+			continue
+		var last := i == 4
+		check(ing.stomp(ing.cells[i]) == last,
+			"stomping cell %d %s the set" % [i, "completes" if last else "does not complete"])
+	check(ing.all_stomped(), "a fully stomped part knows it")
 	h.teardown()
 
 
-## The chef advancing the mark one cell at a time, and only once per cell.
+## The chef pressing one cell at a time, and the part dropping on the last one.
 ##
 ## Sampled every frame rather than frozen at a chosen moment, because a part three
-## wide completes on its third cell: there is no way to hold the chef still part way
-## across one and stop, so any test that waited for a mark and then asserted on it
-## would be racing his next step and would fail on how fast the container ran.
+## wide drops on its third cell: there is no way to hold the chef still part way
+## across one, so any test that waited for a stomp and then asserted on it would be
+## racing his next step and would fail on how fast the container ran.
 ##
-## Instead the invariant is checked directly - the mark must never run ahead of the
-## cells the chef has actually stood on - which is the "distinct cells, not arrivals"
-## rule stated as something that cannot be true by accident, and holds however fast
-## or slow the frames come.
-func _test_cross_progress_covers_each_cell_once() -> void:
-	_begin("the chef advances the mark one cell at a time")
+## Instead the invariant is checked directly - no cell may be down unless the chef
+## has stood on it - which is stated as something that cannot be true by accident,
+## and holds however fast or slow the frames come.
+func _test_stomp_follows_the_cells_the_chef_stands_on() -> void:
+	_begin("the chef stomps one cell at a time")
 	var h := _Harness.new(self)
 	await h.setup(_synthetic_map())
 	var board := h.board
 	if board == null:
 		return
-	# Five wide: it has a cell left over after any point worth stopping at, which a
-	# three wide part does not.
+	# Five wide: a cell left over after any point worth stopping at.
 	var ing := _add_ingredient(h, board, "m", 2, 5, 6)
 	h.player.place(Vector2i(1, 6))
 	await h.frames(2)
 
+	# Sampled through the fall as well as the walk, with no falling guard. Stomps
+	# are only ever taken off by landing, so the count is monotonic for the whole
+	# drop and can be asserted on the frame the last cell goes down - which is the
+	# frame the part leaves, and would be missed by any guard that skipped it.
 	var visited := {}
 	var steps: Array[int] = []
 	var ran_ahead := false
@@ -920,47 +939,47 @@ func _test_cross_progress_covers_each_cell_once() -> void:
 	h.hold(&"move_right")
 	for i in 600:
 		await h.frame()
-		if not ing.falling:
-			if ing.cells.has(h.player.cell):
-				visited[h.player.cell] = true
-			# The invariant: a mark counting more cells than he has stood on is a mark
-			# counting something twice.
-			if ing.cross_cells > visited.size():
-				ran_ahead = true
-			if ing.cross_cells != last:
-				steps.append(ing.cross_cells)
-				last = ing.cross_cells
+		if ing.cells.has(h.player.cell):
+			visited[h.player.cell] = true
+		# The invariant: a cell down that he has not stood on is a cell counted for
+		# something else.
+		if ing.stomped_count() > visited.size():
+			ran_ahead = true
+		if ing.stomped_count() != last:
+			steps.append(ing.stomped_count())
+			last = ing.stomped_count()
 		if ing.rest_row != before:
 			break
 	h.release(&"move_right")
 
-	check(not ran_ahead, "the mark never counts more cells than he stood on",
-		"mark reached %d over %d cells" % [ing.cross_cells, visited.size()])
-	check(steps == [1, 2, 3, 4, 5], "the mark steps one cell at a time, in order",
+	check(not ran_ahead, "no cell is down that he did not stand on",
+		"%d down over %d cells" % [ing.stomped_count(), visited.size()])
+	check(steps == [1, 2, 3, 4, 5], "the part goes down one cell at a time, in order",
 		"steps were %s" % str(steps))
 	check(visited.size() == 5, "he stood on all five cells",
 		"stood on %d" % visited.size())
-	check(ing.rest_row != before, "and the completed crossing dropped it",
+	check(ing.rest_row != before, "and stomping every cell dropped it",
 		"row went %d -> %d" % [before, ing.rest_row])
 	h.teardown()
 
 
-## The mark is given back when a run is abandoned and restored when a part lands.
+## A stomp is not given back by walking off it, and is taken off only by landing.
 ##
-## Both are the same failure - a part drawn squashed with nothing counting it - from
-## opposite directions, which is why they are one test: a fix that handles only the
-## abandon path leaves the part thin on the way down, and one that handles only the
-## completion path leaves it thin for good.
-func _test_cross_progress_is_given_back_and_restored() -> void:
-	_begin("a part gives its mark back, and takes it off on landing")
+## Both halves are the same rule - a jammed key stays jammed, and the only thing that
+## un-jams a part is the part landing - from opposite ends, so they are one test: a
+## fix that gave stomps back on leaving would leave a part that had to be crossed in
+## one unbroken run, and one that never cleared them would leave it part way down for
+## good once it settled.
+func _test_stomps_survive_leaving_and_clear_on_landing() -> void:
+	_begin("stomps survive leaving, and clear on landing")
 	var h := _Harness.new(self)
 	await h.setup(_synthetic_map())
 	var board := h.board
 	if board == null:
 		return
-	# Five wide again, and this time abandoned from the near end: how many cells he
-	# covered on the way out is left to chance, and the assertion does not care as
-	# long as he came off before the fifth.
+	# Five wide, and this time abandoned from the near end: how many cells he
+	# stomped on the way out is left to chance, and the assertion does not care how
+	# many as long as it is some and it is not all five.
 	var ing := _add_ingredient(h, board, "m", 2, 5, 6)
 	h.player.place(Vector2i(1, 6))
 	await h.frames(2)
@@ -970,38 +989,163 @@ func _test_cross_progress_is_given_back_and_restored() -> void:
 	await h.until(func() -> bool: return h.player.cell == Vector2i(4, 6))
 	h.release(&"move_right")
 	# player.cell names the step's destination as soon as the step begins, so the
-	# condition above is "walking towards 4", not "standing on it". The crossing is
-	# advanced by arrivals, so wait the step out before turning around - otherwise he
-	# is still mid-step and the mark behind him is one cell behind where it looks.
-	# Released first: holding the key through the settle walks him over the rest of a
-	# five wide part and completes the crossing this half of the test is about not
-	# completing.
+	# condition above is "walking towards 4", not "standing on it". Stomps land on
+	# arrivals, so wait the step out before turning around - otherwise he is still
+	# mid-step and the cells behind him are one cell behind where they look. Released
+	# first: holding the key through the settle walks him over the rest of a five wide
+	# part and stomps the whole of it, which is what this half of the test is about not
+	# doing.
 	await h.seconds(0.3)
+	var left_on := ing.stomped_count()
 	h.hold(&"move_left")
 	await h.until(func() -> bool: return h.player.cell == Vector2i(1, 6))
 	h.release(&"move_left")
 	await h.seconds(0.3)
 
-	check(ing.cross_cells == 0, "walking back off the part gives the mark back",
-		"still marked %d cells" % ing.cross_cells)
-	check(ing.rest_row == before, "and the abandoned crossing did not drop it",
+	check(left_on > 0 and left_on < 5, "he stomped part of it and then came off",
+		"stomped %d of 5" % left_on)
+	check(ing.stomped_count() == left_on, "walking back off the part keeps the stomps",
+		"was %d, now %d" % [left_on, ing.stomped_count()])
+	check(ing.rest_row == before, "and a part walked off part way does not drop",
 		"row went %d -> %d" % [before, ing.rest_row])
-	check(is_equal_approx(ing.cross_thickness(), 1.0), "so it is drawn full thickness again",
-		"thickness was %.4f" % ing.cross_thickness())
 
-	# All the way across this time. The mark is deliberately left on for the fall, so
-	# the part is only back to full thickness once it has landed.
+	# Coming back finishes it. The cells are still down, so only the rest need
+	# stomping and the part drops as soon as the set is complete.
 	h.hold(&"move_right")
 	await h.until(func() -> bool: return ing.rest_row != before)
 	h.release(&"move_right")
-	check(ing.cross_cells > 0, "the part is still marked while it falls",
-		"marked %d" % ing.cross_cells)
+	check(ing.stomped_count() == 5, "coming back finishes what was left",
+		"stomped %d of 5" % ing.stomped_count())
+	check(ing.stomped_count() > 0, "the cells are still down while it falls",
+		"stomped %d" % ing.stomped_count())
 	await h.until(func() -> bool: return not ing.falling)
-	check(ing.cross_cells == 0, "landing takes the mark off",
-		"still marked %d" % ing.cross_cells)
-	check(is_equal_approx(ing.cross_thickness(), 1.0), "and it is full thickness again",
-		"thickness was %.4f" % ing.cross_thickness())
+	check(ing.stomped_count() == 0, "landing puts every cell back up",
+		"still %d down" % ing.stomped_count())
+	for cell in ing.cells:
+		check(not ing.is_stomped(cell), "cell %s is up again" % str(cell))
 	h.teardown()
+
+
+## The ground floor is the one place a part can be sitting directly above a plate.
+##
+## The scan in landing_spot() starts one row *under* a part's support because it is
+## looking for what is in front of a ledge, and the ground has no front: there is no
+## storey below it to fall onto. Without the separate check a part on the floor would
+## find nothing below it, be told it had hit the bottom of the world, and sit there
+## for ever - which is exactly where a lower bun is supposed to start.
+func _test_a_part_on_the_floor_boards_the_plate_below_it() -> void:
+	_begin("a part on the floor boards the plate below it")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	var ground := Cfg.GRID_H - 2
+	var ing := _add_ingredient(h, board, "m", 0, 2, ground)
+	check(ing.support_row == ground + 1, "it is standing on the ground",
+		"support row is %d" % ing.support_row)
+	check(board.stack(0).size() == 1, "the plate below it still has only its base bun",
+		"stack is %s" % str(board.stack(0)))
+
+	# One cell is not the set. Two is, and only the second reports the drop.
+	check(not ing.stomp(ing.cells[0]), "stomping one of two cells does not drop it")
+	check(ing.stomped_count() == 1, "it has one cell down", "%d down" % ing.stomped_count())
+	check(ing.stomp(ing.cells[1]), "stomping the second does")
+
+	# The knock is the game half of a completed crossing - Player emits crossed and
+	# Game calls knock - driven directly here because the drop being tested is the
+	# part finding its plate, not the chef getting there.
+	ing.knock()
+	await h.until(func() -> bool: return board.stack(0).size() > 1)
+	check(board.stack(0).size() == 2, "and it joined the burger on the plate",
+		"stack is %s" % str(board.stack(0)))
+	h.teardown()
+
+
+## A part that reaches a plate is not a maze ingredient any more: it joins the burger
+## and is drawn as a half-height layer, which is the one thing that still gets thin.
+func _test_a_stomped_part_on_a_plate_becomes_a_burger_layer() -> void:
+	_begin("a stomped part on a plate becomes a burger layer")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	var ground := Cfg.GRID_H - 2
+	var ing := _add_ingredient(h, board, "m", 0, 2, ground)
+	for cell in ing.cells:
+		ing.stomp(cell)
+	ing.knock()
+	await h.until(func() -> bool: return board.stack(0).size() > 1)
+	check(board.stack(0).size() == 2, "the plate collected it",
+		"stack is %s" % str(board.stack(0)))
+	check(board.ingredient_at(Vector2i(0, ground)) == null,
+		"and it has left the maze floor")
+	# Half a cell, which is what makes room for four layers above a plate without
+	# four rows of walkway.
+	check(Cfg.BURGER_LAYER_H * 2 == Cfg.TILE, "a burger layer is half a cell")
+	h.teardown()
+
+
+## The plates are in the ground, and nothing that walks can reach them.
+##
+## Structurally they cannot be: a plate cell has no floor beneath it, so it is not
+## standable, and the ground holds the floor above it up so nothing falls in either.
+## That is worth asserting rather than trusting, because the only way to break it is
+## to put a rung on the bottom row, and that looks ordinary in a map.
+func _test_plates_are_out_of_reach() -> void:
+	_begin("plates are out of the chef's reach")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	var ground := Cfg.GRID_H - 2
+	for plate in board.plates:
+		check(plate.y == ground + 1, "a plate is a level below the floor",
+			"plate row %d, floor %d" % [plate.y, ground])
+		for cell in plate.cells():
+			check(board.is_plate(cell), "cell %s is a plate" % str(cell))
+			check(not board.blocks_player(cell), "and does not block")
+			# It has to hold the floor up, which is the whole reason the floor is
+			# walkable where the plates are.
+			check(board.floor_below(Vector2i(cell.x, ground)),
+				"the floor above %s is solid" % str(cell))
+			check(not board.floor_below(cell), "but nothing can stand on the plate itself")
+	# A chef put on a plate is not supported by anything and falls out of the world,
+	# which is the shape of "nothing that walks gets there".
+	var plate_cell := board.plates[0].cells()[0]
+	check(not board.floor_below(plate_cell), "a plate cell has no floor of its own")
+
+	# And the shipped levels agree, through the validator's own reachability model.
+	for i in LevelData.count():
+		var problems := LevelData.validate(LevelData.get_level(i))
+		check(problems.is_empty(), "level %d still validates" % (i + 1),
+			"%s" % "; ".join(problems))
+	h.teardown()
+
+
+## The chef comes back to the middle of the floor, which is now the row above the
+## plates rather than the row they are in.
+func _test_respawn_is_on_the_floor_not_the_plates() -> void:
+	_begin("a respawn is on the floor, not on the plates")
+	var h := _Harness.new(self)
+	await h.setup(_synthetic_map())
+	var board := h.board
+	if board == null:
+		return
+	var spawn := board._find_respawn_cell()
+	check(not board.is_plate(spawn), "the respawn is not on a plate", "cell %s" % str(spawn))
+	check(spawn.y == Cfg.GRID_H - 2, "it is on the ground floor",
+		"row is %d" % spawn.y)
+	check(not board.blocks_player(Vector2i(spawn.x - 1, spawn.y))
+			or not board.blocks_player(Vector2i(spawn.x + 1, spawn.y)),
+		"and has room to walk off either side of",
+		"spawn %s, left tile %d, right tile %d" % [str(spawn),
+			board.tile_at(Vector2i(spawn.x - 1, spawn.y)),
+			board.tile_at(Vector2i(spawn.x + 1, spawn.y))])
+	h.teardown()
+
 
 # --- Player ----------------------------------------------------------------
 
@@ -2470,7 +2614,7 @@ func _test_the_level_directs_the_chef() -> void:
 ## the shipped levels.
 func _synthetic_map() -> PackedStringArray:
 	var map := _blank_map()
-	map[13] = "OO" + ".".repeat(Cfg.GRID_W - 2)
+	map[14] = "OO" + "#".repeat(Cfg.GRID_W - 2)
 	return map
 
 ## A map with one ladder running the full height of the building, so both ends of
@@ -2486,7 +2630,7 @@ func _full_height_ladder_map() -> PackedStringArray:
 	map[2] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
 	map[3] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
 	map[4] = ".".repeat(Cfg.GRID_W - 2) + "=" + "."
-	map[13] = "O" + ".".repeat(Cfg.GRID_W - 1)
+	map[14] = "O" + "#".repeat(Cfg.GRID_W - 1)
 	return map
 
 
