@@ -11,7 +11,7 @@ signal score_changed(score: int)
 signal level_changed(index: int)
 signal chefs_changed(chefs: int)
 
-const START_CHEFS := 6
+const START_CHEFS := 3
 const START_LEVEL := 0
 
 var score: int = 0
