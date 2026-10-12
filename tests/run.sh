@@ -43,6 +43,15 @@ reject() {
 		echo "$label: script failed to parse or load" >&2
 		bad=1
 	fi
+	# The engine's own ERROR: lines otherwise pass here, because a leak at
+	# exit is real but not play-breaking. An add_child into a parent that is
+	# still setting up children *is* play-breaking: the node never lands, and
+	# a scene whose whole job is that call runs to exit 0 having shown
+	# nothing. That is how the demo booted clean while showing a black screen.
+	if grep -q "busy setting up" "$log"; then
+		echo "$label: add_child into a busy parent - node never attached" >&2
+		bad=1
+	fi
 	return "$bad"
 }
 
@@ -70,9 +79,9 @@ fi
 # that needs captures or input reports that on stderr and exits non-zero, which
 # is fine here - reject() only looks for timeouts and script errors, not for the
 # tool's own opinion of whether it had what it needed.
-for scene in "title:" "game:scenes/game.tscn" \
-		"tool-levels:tools/check_levels.tscn" \
-		"tool-visual:tools/visual_check.tscn"; do
+	for scene in "title:" "game:scenes/game.tscn" \
+			"tool-levels:tools/check_levels.tscn" \
+			"tool-visual:tools/visual_check.tscn"; do
 	label="${scene%%:*}"
 	target="${scene#*:}"
 	# shellcheck disable=SC2086
@@ -82,6 +91,18 @@ for scene in "title:" "game:scenes/game.tscn" \
 	# shellcheck disable=SC2086
 	echo "boot $label: ok (${target:-res://scenes/main.tscn})"
 done
+
+# The demo cycle is timed in seconds, and headless frames run faster than
+# real time, so a plain boot would only ever reach its first state. Fixed
+# fps decouples simulation from the wall clock: 2500 frames at 30 fps is
+# about 83 seconds of game time, enough to drive autoplay into a title
+# return and back out again - both scene changes and the bot attach, which
+# is where the old manual add_child design died.
+timeout "$TIMEOUT_SECONDS" "$GODOT" --headless --fixed-fps 30 \
+	scenes/demo.tscn --quit-after 2500 >"$log" 2>&1
+status=$?
+reject "boot demo-cycle" "$status" || fail=1
+echo "boot demo-cycle: ok (scenes/demo.tscn, 83s of cycle)"
 
 # --- scripted action branches ------------------------------------------------
 # The capture tool has six actions and booting it bare reaches one of them, so

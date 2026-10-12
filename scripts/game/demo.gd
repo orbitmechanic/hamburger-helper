@@ -1,84 +1,86 @@
 extends Node
-## Arcade demo mode: cycles between autoplay and title screen.
+## Arcade demo mode: cycles between autoplay and the title screen.
+##
+## This node is attached to the root viewport, not to any scene, so it survives
+## the scene changes it drives. The cycle is `change_scene_to_file`, nothing
+## manual: adding the title or a game as a sibling of the current scene fails
+## outright from inside this node's own `_ready` - the root is busy setting up
+## children while it is being added - and even when it works it leaves the real
+## title running underneath, drawing and eating input.
 
 const PLAY_TIME := 60.0
 const TITLE_TIME := 20.0
 
-var _play_time_override := 0.0
-var _title_time_override := 0.0
-
 enum State { TITLE, PLAY }
 
 var state := State.TITLE
+## Both entries - an idle title and a standalone boot through
+## scenes/demo.tscn - go straight to play: whoever got here has already
+## been looking at the title. Between runs the cycle holds the title for
+## TITLE_TIME.
 var _time := 0.0
 var _bot: Node = null
-var _title_scene: PackedScene = null
-var _game_scene: PackedScene = null
-var _current: Node = null
+
 
 func _ready() -> void:
-	_title_scene = preload("res://scenes/main.tscn")
-	_game_scene = preload("res://scenes/game.tscn")
-	_go_title()
+	state = State.TITLE
+	_time = TITLE_TIME
+
 
 func _process(delta: float) -> void:
 	_time += delta
 	match state:
 		State.TITLE:
-			var t := _title_time_override if _title_time_override > 0.0 else TITLE_TIME
-			if _time >= t:
+			if _time >= TITLE_TIME:
 				_go_play()
 		State.PLAY:
-			if _bot != null and _bot.has_method("think"):
+			if _bot == null:
+				_attach_bot()
+			elif _bot.has_method("think"):
 				_bot.think(delta)
-			var t := _play_time_override if _play_time_override > 0.0 else PLAY_TIME
-			if _time >= t:
+			if _time >= PLAY_TIME:
 				_go_title()
 
-func _go_title() -> void:
-	_clear()
-	_time = 0.0
-	state = State.TITLE
-	_current = _title_scene.instantiate()
-	get_tree().root.add_child(_current)
 
 func _go_play() -> void:
-	_clear()
-	_time = 0.0
 	state = State.PLAY
-	_current = _game_scene.instantiate()
-	get_tree().root.add_child(_current)
-	var Bot := load("res://tools/survival_bot.gd")
-	_bot = Bot.new()
-	_current.add_child(_bot)
-	call_deferred("_setup_bot_if_ready")
+	_time = 0.0
+	get_tree().change_scene_to_file("res://scenes/game.tscn")
 
-func _setup_bot_if_ready() -> void:
-	if _current == null or _bot == null:
+
+func _go_title() -> void:
+	_release_bot()
+	state = State.TITLE
+	_time = 0.0
+	get_tree().change_scene_to_file("res://scenes/main.tscn")
+
+
+## Retries until the new scene is current, because the scene change is
+## deferred out of whatever frame asked for it.
+func _attach_bot() -> void:
+	var game := get_tree().current_scene as Game
+	if game == null:
 		return
-	if _current is Game:
-		(_current as Game).start_level(GameState.level_index)
-	if _bot.has_method("setup"):
-		_bot.setup(_current as Game)
+	_bot = load("res://tools/survival_bot.gd").new()
+	game.add_child(_bot)
+	_bot.setup(game)
 
-func _clear() -> void:
+
+func _release_bot() -> void:
 	if _bot != null:
 		_bot.queue_free()
 		_bot = null
-	if _current != null:
-		_current.queue_free()
-		_current = null
 
-func _exit_demo() -> void:
-	_clear()
-	queue_free()
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed:
-		_exit_demo()
-		get_tree().change_scene_to_file("res://scenes/game.tscn")
-		get_tree().root.get_viewport().set_input_as_handled()
-	elif event is InputEventJoypadButton and event.pressed:
-		_exit_demo()
-		get_tree().change_scene_to_file("res://scenes/game.tscn")
-		get_tree().root.get_viewport().set_input_as_handled()
+	var key: bool = event is InputEventKey and event.pressed and not event.is_echo()
+	var pad: bool = event is InputEventJoypadButton and event.pressed
+	if not (key or pad):
+		return
+	# Any real input hands the machine to the human. On the title screen the
+	# press belongs to the title's own start handling and the arrows do not
+	# start anything, so leaving is all that happens here. In autoplay it
+	# means the chef: the running game is kept rather than replaced, and the
+	# bot is taken out of it.
+	_release_bot()
+	queue_free()

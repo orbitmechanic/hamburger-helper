@@ -69,6 +69,17 @@ const HUD_TEXT := Cfg.COL_PLATE
 ## outline, which still draws a recognisable chef in the wrong place.
 const CHEF_HAT := ChefArt.COL_HAT
 const CHEF_INK := ChefArt.COL_LINE
+## The title's own ink: its headline colour, its prompt colour, and the
+## patty of the burger it stacks. These three appear nowhere else on the
+## title's first frame, so a blank frame - which is exactly what a lost
+## `_draw` leaves, and what shipped once - fails here rather than only
+## passing the distinctness pairs, which a plain background clears.
+const TITLE_HEAD := Color("f5c53a")
+const TITLE_PROMPT := Color("6fc24a")
+## Generous on purpose: this is a check that the title draws *something*,
+## not a pin on how big its letters are. The headline alone covers well
+## over a hundred pixels; this floor asks for a few dozen.
+const MIN_TITLE_SHARE := 0.0006
 ## Smallest share of the image each thing may cover. The HUD and the card panel
 ## are set from what the real captures draw, with roughly half again as much
 ## margin as the thinnest one. The level share is deliberately not set that way:
@@ -184,6 +195,15 @@ func _run() -> void:
 	for entry in PLAY_SHOTS:
 		_check_brand("%s draws the level" % entry[0], entry[0], int(entry[1]),
 				MIN_LEVEL_SHARE)
+
+	# The title must be more than background. It was a black frame while its
+	# drawing code sat deleted, every pair check below passing, because "not
+	# the same as a level" is also true of "nothing at all". The capture is
+	# frame 1, so the blink is in its on phase deterministically.
+	_check_share("title draws its headline", "01-title", TITLE_HEAD, MIN_TITLE_SHARE)
+	_check_share("title draws its prompt", "01-title", TITLE_PROMPT, MIN_TITLE_SHARE)
+	_check_share("title stacks a burger", "01-title",
+			Food.color_of(Food.Kind.PATTY), MIN_TITLE_SHARE)
 
 	# No two captures may be the same picture. A stale capture comes back
 	# byte-identical to whatever was on screen before, which is how a level-4

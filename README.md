@@ -9,11 +9,22 @@ parts onto the plates below until the burgers are made. There is no clock.
 
 ```sh
 godot --path .                                          # play
+godot --path . scenes/demo.tscn                         # attract mode, start to end
 godot --headless --import                               # build the class cache
 ./tests/run.sh                                          # run the test suite
 ```
 
 No export templates are required to run from source.
+
+The title screen is also the attract mode: it waits ten seconds for a human,
+then hands the keyboard to `demo.gd`, which cycles autoplay (driven by the same
+survival bot the tools use) and the title until a real keypress takes over. In
+autoplay a press keeps the game that is on screen and hands the chef to the
+player rather than restarting the run. The cycle hangs off the root viewport,
+not off any scene, and moves between screens with `change_scene_to_file`; an
+`add_child` of the title or the game from inside its own `_ready` fails,
+because the root is busy setting up children at exactly that moment, and it
+would leave the real title underneath eating input either way.
 
 The test runner is a scene rather than a `godot --script` entry point on
 purpose: a `--script` entry is compiled before autoloads are registered, so
@@ -24,6 +35,7 @@ fails to compile.
 
 | Action | Keys |
 |--------|------|
+| Start, from the title | Space, X or Enter |
 | Move, and climb ladders | Arrow keys or WASD |
 | Jump, or reach up | Space or X |
 | Spray seasoning | F, or the gamepad B button |
@@ -365,15 +377,46 @@ both bit during development:
   while `hud.gd` failed to parse, because the tests build `Game` directly and
   never load the scene's HUD.
 
-So `tests/run.sh` runs the suite, boots four scenes, and then boots
+So `tests/run.sh` runs the suite, boots four scenes, boots the demo cycle for
+eighty seconds of fixed-fps game time - long enough to cross a full autoplay
+run into a title return and back, which is the scene-swap path - and then boots
 `tools/shot_scripted.tscn` once per capture action, judging each run by scanning
-its output for script errors, parse failures and timeouts rather than trusting the
-exit status. The per-action loop is there because booting the tool bare only
+its output for script errors, parse failures, timed add_child refusals and
+timeouts rather than trusting the exit status. The per-action loop is there
+because booting the tool bare only
 reaches its default action: a parse error is caught by any boot, since the whole
 script is parsed on load, but a runtime fault in a branch nothing enters is not,
 and nothing else in CI runs the capture tool. CI runs the same script.
 
+## Deploying (web)
+
+The game exports to HTML5 with threads, which means SharedArrayBuffer, which
+means the browser will refuse to run it unless the server isolates the origin.
+Serving it is two headers, not a file you can ship:
+
+```sh
+mkdir -p build/web
+godot --headless --export-release "Web" build/web/index.html
+```
+
+Then serve `build/web/` with **both** of these on every response, including
+the wasm:
+
+```
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+`python3 -m http.server` does not send them; itch.io does once "SharedArrayBuffer
+support" is ticked on the project. `export_presets.cfg` is committed and
+`build/` is ignored - the preset is the recipe, the build is the output.
+Verified against the exported build in headless Chromium: title, attract
+autoplay, takeover on a real keypress, and walking the chef all render, with
+no page errors.
+
 ## Screenshots and visual checks
+
+
 
 `tools/shots.sh` renders the real game and saves PNGs of the title, the level
 card and each level to `/tmp/hamburger-helper`:
