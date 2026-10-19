@@ -37,6 +37,12 @@ func _process(delta: float) -> void:
 
 func _start_demo() -> void:
 	_demo_started = true
+	# Attract mode is the bot driving a real game, and the bot lives in
+	# tools/, which the web export excludes. An export that cannot drive
+	# should hold its title rather than start a demo that instantly hands
+	# the screen back.
+	if not ResourceLoader.exists("res://tools/survival_bot.gd"):
+		return
 	if get_tree().root.get_node_or_null("Demo") != null:
 		return
 	var demo := Node.new()

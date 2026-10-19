@@ -20,6 +20,9 @@ var state := State.TITLE
 ## TITLE_TIME.
 var _time := 0.0
 var _bot: Node = null
+## Set once the bot script turns out to be missing, so its absence is paid
+## for once rather than on every attach attempt.
+var _no_bot := false
 
 
 func _ready() -> void:
@@ -34,9 +37,9 @@ func _process(delta: float) -> void:
 			if _time >= TITLE_TIME:
 				_go_play()
 		State.PLAY:
-			if _bot == null:
+			if _bot == null and not _no_bot:
 				_attach_bot()
-			elif _bot.has_method("think"):
+			elif _bot != null and _bot.has_method("think"):
 				_bot.think(delta)
 			if _time >= PLAY_TIME:
 				_go_title()
@@ -60,6 +63,16 @@ func _go_title() -> void:
 func _attach_bot() -> void:
 	var game := get_tree().current_scene as Game
 	if game == null:
+		return
+	# The bot lives in tools/, which the export preset excludes, so a web
+	# build cannot load it. Without one there is nothing to autoplay, and
+	# the cycle just keeps handing the screen back to the title - which is
+	# what it did before autoplay existed - instead of throwing every frame.
+	# ResourceLoader.exists rather than load: a failed load logs two errors
+	# every time it is tried, and an absent tool is not an error.
+	if not ResourceLoader.exists("res://tools/survival_bot.gd"):
+		_no_bot = true
+		_go_title()
 		return
 	_bot = load("res://tools/survival_bot.gd").new()
 	game.add_child(_bot)
