@@ -88,7 +88,12 @@ func _release_bot() -> void:
 func _input(event: InputEvent) -> void:
 	var key: bool = event is InputEventKey and event.pressed and not event.is_echo()
 	var pad: bool = event is InputEventJoypadButton and event.pressed
-	if not (key or pad):
+	# A tap on the on-screen controls is a press too: the pads drive the game
+	# through Input.action_press rather than key events, so without this a
+	# mobile player would be steering against the bot for the rest of the
+	# sixty-second run.
+	var touch: bool = event is InputEventScreenTouch and event.pressed
+	if not (key or pad or touch):
 		return
 	# Any real input hands the machine to the human. On the title screen the
 	# press belongs to the title's own start handling and the arrows do not

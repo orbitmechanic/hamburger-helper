@@ -104,6 +104,21 @@ status=$?
 reject "boot demo-cycle" "$status" || fail=1
 echo "boot demo-cycle: ok (scenes/demo.tscn, 83s of cycle)"
 
+# --- the mobile path --------------------------------------------------------
+# The touch layer builds its pads only when the client looks like a phone, and
+# a headless box never does, so the auto path would leave the whole visible
+# branch - build, inverse-stretch layout, drawing against a live HUD - unrun
+# by everything above. The user-arg override forces the layer on, and both
+# screens that talk to it (the title's prompt, the game's HUD) boot with it.
+for scene in "title-touch:scenes/main.tscn" "game-touch:scenes/game.tscn"; do
+	label="${scene%%:*}"
+	target="${scene#*:}"
+	timeout 90 "$GODOT" --headless --quit-after 400 "$target" -- --touch-controls >"$log" 2>&1
+	status=$?
+	reject "boot $label" "$status" || fail=1
+	echo "boot $label: ok ($target, forced on)"
+done
+
 # --- scripted action branches ------------------------------------------------
 # The capture tool has six actions and booting it bare reaches one of them, so
 # the other five are driven explicitly here.

@@ -25,6 +25,7 @@ func _run() -> void:
 	print_rich("[b]Hamburger Helper - test suite[/b]")
 
 	_test_input_map()
+	_test_touch_controls()
 	_test_levels_validate()
 	_test_levels_are_branded()
 	_test_validator_has_teeth()
@@ -123,6 +124,105 @@ func _test_input_map() -> void:
 				missing.append(k)
 		check(missing.is_empty(), "%s responds to its documented keys" % action,
 			"missing %s" % str(missing))
+
+## The mobile controls are a page overlay that sends real keys to the canvas,
+## so what can rot is the wiring: the detection decision, the overlay's shape
+## as a page script, and - above all - the keys it sends having to still be
+## keys the input map binds. And demo mode still has to hand over to a thumb,
+## not only to a keycap.
+func _test_touch_controls() -> void:
+	_begin("touch controls")
+
+	check(TouchLayer != null, "the mobile layer ships as an autoload")
+	check(not TouchLayer.active, "the headless runner does not look like a phone")
+
+	TouchControls.force = 0
+	check(not TouchControls.is_mobile_client(), "force off is off")
+	TouchControls.force = 1
+	check(TouchControls.is_mobile_client(), "force on is on")
+	TouchControls.force = -1
+
+	# The pads are a page script the mobile client runs, shipped inside the
+	# autoload. It has to target the canvas - which is what Godot's web
+	# template wires its key listeners to - capture pointers so a slid-off
+	# finger still releases its key, and release everything on blur.
+	var overlay := TouchControls.OVERLAY_JS
+	check(overlay.contains('getElementById("canvas")'),
+		"the overlay sends its keys to the canvas")
+	check(overlay.contains("new KeyboardEvent"), "the overlay sends real key events")
+	check(overlay.contains("setPointerCapture"), "the overlay holds a press it slides off of")
+	check(overlay.contains('"blur"'), "the overlay drops held keys when the tab blurs")
+	check(overlay.contains("touch-action:none"), "the overlay stops the browser stealing gestures")
+
+	# Every key the overlay sends must be a key the game binds. The pads are
+	# keys rather than actions on purpose - attract mode hands over to keys,
+	# and any rebinding that strands them is exactly the drift this checks.
+	var wanted := {
+		"ArrowLeft": &"move_left",
+		"ArrowRight": &"move_right",
+		"ArrowUp": &"move_up",
+		"ArrowDown": &"move_down",
+		"KeyX": &"jump",
+		"KeyF": &"pepper",
+		"KeyP": &"pause",
+	}
+	var code_re := RegEx.create_from_string('"((?:Key[A-Z]|Arrow(?:Left|Right|Up|Down)))"')
+	var sent: Array[String] = []
+	for m in code_re.search_all(overlay):
+		var code := m.get_string(1)
+		if not sent.has(code):
+			sent.append(code)
+	check(sent.size() == wanted.size(), "the overlay sends one key per documented pad",
+		"sends %s" % str(sent))
+	for code in wanted:
+		check(sent.has(code), "the overlay sends %s" % code)
+		if not wanted.has(code):
+			continue
+		var bound := false
+		for e in InputMap.action_get_events(wanted[code]):
+			var key := e as InputEventKey
+			if key == null:
+				continue
+			var physical := key.physical_keycode
+			var expected := _physical_of_code(code)
+			if expected != KEY_NONE and physical == expected:
+				bound = true
+		check(bound, "%s still belongs to %s" % [code, wanted[code]])
+	for code in sent:
+		check(wanted.has(code), "the overlay only sends keys the suite knows (%s)" % code)
+
+	# Demo mode hands over to a tap: on the canvas the engine delivers a real
+	# screen touch, and without the touch branch in demo.gd a player tapping
+	# the board would be steering against the bot for the rest of the
+	# sixty-second run. Off the tree on purpose: the demo's first _process
+	# frame changes the scene, and a test suite whose current scene changes
+	# out from under it never comes back.
+	var demo := Node.new()
+	demo.set_script(load("res://scripts/game/demo.gd"))
+	var tap := InputEventScreenTouch.new()
+	tap.pressed = true
+	demo._input(tap)
+	check(demo.is_queued_for_deletion(), "a screen touch takes the demo off the air")
+	var demo2 := Node.new()
+	demo2.set_script(load("res://scripts/game/demo.gd"))
+	tap.pressed = false
+	demo2._input(tap)
+	check(not demo2.is_queued_for_deletion(), "but a lifting finger does not")
+	demo.free()
+	demo2.free()
+
+
+## The physical key a DOM KeyboardEvent code stands for, for the overlay's
+## keys to be comparable against the input map.
+func _physical_of_code(code: String) -> int:
+	if code.begins_with("Key") and code.length() == 4:
+		return code.to_utf8_buffer()[3]
+	match code:
+		"ArrowLeft": return KEY_LEFT
+		"ArrowRight": return KEY_RIGHT
+		"ArrowUp": return KEY_UP
+		"ArrowDown": return KEY_DOWN
+	return KEY_NONE
 
 # --- Levels ----------------------------------------------------------------
 

@@ -77,11 +77,18 @@ func _draw() -> void:
 	_title(Vector2(w * 0.5, 52.0), "HELPER", Color("e2453c"), 20)
 
 	_center(Vector2(w * 0.5, h - 62.0), "WALK ALL THE WAY ACROSS FOOD TO DROP IT", Color("f4f4ff"), 8)
-	_center(Vector2(w * 0.5, h - 52.0), "ARROWS OR WASD TO MOVE   UP AND DOWN ON LADDERS", Color("9a9ac0"), 8)
-	_center(Vector2(w * 0.5, h - 42.0), "X TO JUMP   F TO THROW PEPPER   P TO PAUSE", Color("9a9ac0"), 8)
+	if TouchLayer.active:
+		# The keyboard legend would describe furniture this client does not
+		# have; the pads say what they do in the legend instead.
+		_center(Vector2(w * 0.5, h - 52.0), "LEFT PAD MOVES AND CLIMBS LADDERS", Color("9a9ac0"), 8)
+		_center(Vector2(w * 0.5, h - 42.0), "X JUMPS   F THROWS PEPPER   II PAUSES", Color("9a9ac0"), 8)
+	else:
+		_center(Vector2(w * 0.5, h - 52.0), "ARROWS OR WASD TO MOVE   UP AND DOWN ON LADDERS", Color("9a9ac0"), 8)
+		_center(Vector2(w * 0.5, h - 42.0), "X TO JUMP   F TO THROW PEPPER   P TO PAUSE", Color("9a9ac0"), 8)
 
 	if fposmod(_t, 1.0) < 0.65:
-		_center(Vector2(w * 0.5, h - 24.0), "PRESS SPACE", Color("6fc24a"), 10)
+		_center(Vector2(w * 0.5, h - 24.0),
+			"TAP X TO START" if TouchLayer.active else "PRESS SPACE", Color("6fc24a"), 10)
 
 	_center(Vector2(w * 0.5, h - 10.0), "HIGH SCORE %06d" % GameState.high_score, Color("9a9ac0"), 8)
 

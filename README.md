@@ -41,6 +41,32 @@ fails to compile.
 | Spray seasoning | F, or the gamepad B button |
 | Pause | P or Escape |
 | Restart | R |
+| Any of the above, on a phone or tablet | On-screen pads: d-pad low-left, X/F low-right, II top-right |
+
+Mobile clients - a phone browser, or an iPad sending its desktop-UA Safari -
+get an on-screen overlay instead of a keyboard: a d-pad and the three verbs,
+laid over the letterbox bars in the page and sending **real key events** to
+the canvas. The game reads them through the same action map as a physical
+keyboard, so no gameplay code is mobile aware: attract mode hands the chef to
+a thumb the way it hands him to a keypress, a pause is a pause, and the suite
+checks that every code the pads send is still bound in `project.godot` rather
+than stranded by a rebinding.
+
+Two details are load-bearing rather than incidental. The pads are DOM, not
+CanvasItems: the viewport stretch clips everything Godot draws - any
+CanvasLayer's too, whatever transform it carries - to the letterboxed
+256x240, and the bars are exactly where the thumbs are; both the clip and the
+overlay's behaviour were verified against a phone-emulated Chromium, not
+assumed. And the script that builds it ships inside the pck, evaluated at
+startup by the `TouchLayer` autoload through `JavaScriptBridge`: the web
+export's `html/head_include` option injects its literal string rather than
+the file its value names in 4.7, which is not a place to maintain a fragment.
+The same autoload decides the mobile question for the title screen, so the
+legend and the pads can never disagree about who is a phone - the title
+offers `TAP X TO START` and a pads legend when they are on, `PRESS SPACE` and
+the key legend when they are not. `TOUCH_CONTROLS=1` or `0`, or the
+`--touch-controls` / `--no-touch-controls` user args, force the decision for
+the headless CI boots.
 
 Walking the **full width** of a part knocks it down one storey, so a three-cell
 patty has to be crossed end to end. The board shows how far along you are: every
@@ -390,29 +416,29 @@ and nothing else in CI runs the capture tool. CI runs the same script.
 
 ## Deploying (web)
 
-The game exports to HTML5 with threads, which means SharedArrayBuffer, which
-means the browser will refuse to run it unless the server isolates the origin.
-Serving it is two headers, not a file you can ship:
+The game runs on GitHub Pages from the `gh-pages` branch, so the export is a
+no-threads build: `export_presets.cfg` keeps `variant/thread_support=false`
+off. Threads would mean SharedArrayBuffer, which means the server has to
+isolate the origin with COOP/COEP headers on every response - something
+Pages cannot do and `python3 -m http.server` does not do either. No-threads
+needs nothing special from the host:
 
 ```sh
 mkdir -p build/web
 godot --headless --export-release "Web" build/web/index.html
 ```
 
-Then serve `build/web/` with **both** of these on every response, including
-the wasm:
+Then publish `build/web/` at the root of `gh-pages` (the branch is checked
+out with `git worktree add`, the files copied in, committed and pushed). The
+preset is the recipe, `build/` is ignored, and the mobile overlay travels in
+the pck rather than being stitched in at export time.
 
-```
-Cross-Origin-Opener-Policy: same-origin
-Cross-Origin-Embedder-Policy: require-corp
-```
-
-`python3 -m http.server` does not send them; itch.io does once "SharedArrayBuffer
-support" is ticked on the project. `export_presets.cfg` is committed and
-`build/` is ignored - the preset is the recipe, the build is the output.
-Verified against the exported build in headless Chromium: title, attract
-autoplay, takeover on a real keypress, and walking the chef all render, with
-no page errors.
+Verified against the exported build in headless Chromium - desktop, an
+emulated iPhone in both orientations, a Windows touch laptop and a
+desktop-UA iPad: title and gameplay render, the pads appear only on the
+phones and the tablet, tapping X takes over from the attract loop and starts
+the game, a touch-capable desktop keeps the keyboard legend, and nothing
+writes to the console.
 
 ## Screenshots and visual checks
 
